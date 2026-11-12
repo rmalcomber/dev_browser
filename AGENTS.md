@@ -7,7 +7,7 @@ Keep this file short. If a rule matters, it goes here; if it is detail, it goes 
 The Dev Browser is a personal, developer-oriented desktop browser written in Rust, rendering with embedded Chromium (CEF),
 with the Home Screen launcher and tools built in. Its core ideas: vertical tabs grouped by **workspace** (each with its own
 isolated login session and data), a browser-owned `Ctrl+P` launcher, a right-hand widget panel, and two-pane split view.
-Status: the M0 feasibility spike (`spike/`, disposable) is done on Windows and the shell decision is recorded (direct CEF through cef-rs, Alloy-style views); M1 is next.
+Status: the M0 feasibility spike (`spike/`, disposable) is done on Windows and the shell decision is recorded (direct CEF through cef-rs, Alloy-style views); M1 has started (`planning/m1-plan.md`): the Cargo workspace, `core` storage and the `ui/` scaffold exist; the CEF host is next.
 
 Start with `planning/README.md`, then `planning/home-screen-browser-spec.md` (the source spec) and
 `planning/roadmap-and-milestones.md`.
@@ -17,10 +17,11 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 
 | Task | Command |
 | --- | --- |
-| Install | _TODO_ |
-| Run / dev | _TODO_ |
-| Test | _TODO_ |
-| Build | _TODO_ |
+| Install | `cd ui && npm install` (Rust needs CMake, Ninja and a CEF export for the app build; see `tools/build.ps1`) |
+| Run / dev | `tools\build.ps1 run` (Windows; builds `ui/`, the app, copies the CEF runtime; not wired up until M1.1) |
+| Test | `tools\build.ps1 test` |
+| Check (fmt, clippy, tests, ui build) | `tools\build.ps1 check` |
+| Build | `tools\build.ps1 build` |
 | Docs dev | `cd docs && npm install && npm run dev` |
 | Docs build (also checks links) | `cd docs && npm run build` |
 
@@ -29,8 +30,9 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 - `docs/src/content/docs/`: the pages. Folders become sidebar groups.
 - `docs/ai/`: agent working notes (not published): `decisions.md`, `glossary.md`, `conventions.md`.
 - `planning/`: working plans, spec, milestones, open questions, security test matrix. Not published. Settled behaviour moves to `docs/`.
-- `spike/` (future, M0): disposable feasibility code. Clearly marked; not the product.
-- `src/` (future): Rust application. `ui/` (future): trusted TypeScript shell (launcher, sidebar, widgets).
+- `spike/`: disposable M0 feasibility code, excluded from the Cargo workspace. Deleted once M1.1 lands; not the product.
+- `crates/core` (domain and SQLite storage, no CEF), `crates/host` (CEF only, M1.1), `crates/app` (the binary).
+- `ui/`: trusted Preact shell (Vite, vitest), served from `app://shell`. `tools/`: build and test scripts.
 - Sibling project `../home_screen` is the source of the launcher and tools. Read it; never edit it from here.
 
 ## Invariants (spec section 6.3; do not weaken without a recorded decision)

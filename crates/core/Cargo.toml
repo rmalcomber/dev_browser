@@ -1,0 +1,11 @@
+[package]
+name = "dev_browser_core"
+description = "Domain and storage for The Dev Browser: workspaces, tabs, settings, migrations and the broker rules. No CEF."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# SQLite, bundled so the build needs no system library; the same crate and feature home_screen uses (see docs/ai/decisions.md).
+rusqlite = { version = "0.32", features = ["bundled"] }

@@ -1,0 +1,11 @@
+[package]
+name = "dev_browser_host"
+description = "The only crate that touches CEF: app, handlers, views, request contexts, panes. Thin; the logic lives in core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dev_browser_core = { path = "../core" }
+# cef and cef-dll-sys are added in M1.1, pinned to a git revision (see docs/ai/decisions.md, D4).

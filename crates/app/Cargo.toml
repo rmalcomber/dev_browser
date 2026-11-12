@@ -1,0 +1,15 @@
+[package]
+name = "dev_browser"
+description = "The Dev Browser: a personal, developer-oriented desktop browser."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "dev_browser"
+path = "src/main.rs"
+
+[dependencies]
+dev_browser_core = { path = "../core" }
+dev_browser_host = { path = "../host" }

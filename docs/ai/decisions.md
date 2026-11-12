@@ -2,6 +2,48 @@
 
 Newest first. One entry per non-obvious decision: what, why, what was rejected.
 
+## 2026-11-12: Dependencies for the M1 foundation
+- **Decision:** Rust `core`: `rusqlite` with the bundled SQLite (the same crate and feature `home_screen` uses; the spec's storage is SQLite). UI: `preact` and `@preact/signals` (the `home_screen` stack, so its components drop in at M2), `vite` and `@preact/preset-vite` (build), `vitest` and `jsdom` (tests). Nothing else yet; `cef` and `cef-dll-sys` arrive with the `host` crate (see the shell decision).
+- **Why:** each has one job and no cheaper standard-library or platform route: the standard library has no SQLite, and a sidebar with groups needs a view layer and a build step.
+- **Rejected:** a CSS framework in the shell for now (`home_screen` uses Tailwind and daisyUI; revisit when the sidebar needs it); an ORM or migration crate (a small hand-written migration runner is enough and easier to test).
+- **Cost in bytes/deps:** the UI bundle is small (Preact is about 4 KB gzipped); SQLite adds roughly 1 MB to the binary. Space is not a constraint here (Roy, 2026-11-12), so these are recorded for review, not as a budget.
+
+## 2026-11-12: Data location, `%LOCALAPPDATA%\dev_browser\` (D6)
+- **Decision:** All application data lives under `%LOCALAPPDATA%\dev_browser\`: global `browser.db`, `chromium-root\` (CEF's root cache path, one direct child per workspace), and `workspaces\<id>\` with each workspace's `browser.db` and `homescreen.db`. Workspace folders use generated IDs, never names. A `--data-dir` flag overrides it for tests.
+- **Why:** it matches the spec's layout and keeps browser data out of roaming profiles. The override keeps tests and the spike-style tools away from real data.
+- **Rejected:** `%APPDATA%` (roams, and would sync browser data between machines); a folder next to the executable (breaks on read-only installs).
+- **Cost in bytes/deps:** none.
+
+## 2026-11-12: What CI covers (D5)
+- **Decision:** CI builds the Rust crates that do not need CEF, runs `cargo test` and `cargo clippy`, runs the UI unit tests and the docs build. The GUI checks (real input, window capture, frame analysis) stay local scripts in `tools/`. Adding the CI workflow itself needs Roy's approval first (it is deploy-adjacent configuration).
+- **Why:** a hosted Windows runner has no interactive desktop, and the M0 checks need one. They found defects logs and unit tests missed, so they stay part of "done", run by hand before a slice is called finished.
+- **Rejected:** running the GUI checks in CI (unreliable without a desktop); skipping them (they paid for themselves in M0).
+- **Cost in bytes/deps:** none.
+
+## 2026-11-12: cef-rs and CEF version policy (D4)
+- **Decision:** Pin cef-rs to an exact git revision and CEF to the version it targets. Upgrade deliberately, on a schedule that follows Chromium security releases, and re-run the `tools/` checks (and the M0 wrapper and destroy scenarios) on every upgrade. Record each bump here.
+- **Why:** crates.io 156.4.0 did not build (the CEF download step fails on the CDN index size), so a git pin is needed anyway; a pin also makes builds reproducible and makes picking up a Chromium security fix a conscious step rather than an accident. The spec makes a security-update strategy mandatory before important accounts are used.
+- **Rejected:** floating on crates.io or `main` (builds change under us); vendoring cef-rs (more to maintain).
+- **Cost in bytes/deps:** one pinned git dependency; a CEF export step per machine (`tools/`).
+
+## 2026-11-12: First supported OS is Windows (D3, confirmed by Roy)
+- **Decision:** Windows is the first supported platform. Platform-specific code stays inside the `host` crate. Linux and macOS are separate, later commitments, each with its own test and packaging work.
+- **Why:** it is the only platform the M0 spike validated and the one in daily use.
+- **Rejected:** building for several platforms from the start (each multiplies the test and packaging work before there is a working product).
+- **Cost in bytes/deps:** none.
+
+## 2026-11-12: How the shell talks to Rust (D2)
+- **Decision:** The shell view and the Rust host talk over CEF process messages with a small V8 binding (`window.m0`) that the render process installs **only** for documents served from the private `app://shell` origin. Web pages get no binding. Commands and events are typed: one Rust enum, one TypeScript type generated from it. The Rust side resolves the caller from the frame that sent the message, never from a field in the message.
+- **Why:** it replaces the spike's page-title hack, keeps privileged IPC out of web pages by construction (the first S6 check), and makes caller identity something the browser knows rather than something a page claims.
+- **Rejected:** a localhost HTTP server (reachable from any page and any local process: fine for a personal start page like `home_screen`, not for a browser); `cefQuery` (works, but is a generic string channel we would have to type ourselves).
+- **Cost in bytes/deps:** none beyond the cef crate.
+
+## 2026-11-12: Shell UI is Preact in trusted browser views (D1, confirmed by Roy)
+- **Decision:** The sidebar, toolbar and later the launcher and widget panel are Preact (with signals) apps built with Vite and loaded in trusted browser views from `app://shell`. They are not CEF Views widgets.
+- **Why:** the launcher and tools in M2 and M3 are `home_screen` code, which is Preact; one stack means they drop in. The spike's overlay and divider already prove trusted views work in a Views window. Views widgets cannot do a sidebar with groups and drag in a reasonable amount of code.
+- **Rejected:** CEF Views widgets for the chrome (too limited); a different framework (loses the `home_screen` reuse).
+- **Cost in bytes/deps:** see the dependencies entry above.
+
 ## 2026-11-12: Shell integration: direct CEF through cef-rs (decided after the M0 spike)
 - **Decision:** The browser shell is a Rust host that embeds CEF directly through the `cef` bindings from [tauri-apps/cef-rs](https://github.com/tauri-apps/cef-rs), using CEF's Views framework with Alloy-style browser views (see the entry below). Tauri with CEF is not used.
 - **Why:** The M0 spike (`spike/`, results in `planning/m0-feasibility-spike.md`) ran all five tests on Windows with this stack: embedding, a browser-owned draggable overlay, `Ctrl+P` interception from a page, an input and an iframe, one request context and profile per workspace that survives restarts without leaking, and two panes with a saved divider, outlines and flash-free workspace swaps. It also showed the pieces M1 to M3 need work: per-view destroy and recreate, app-owned dialogs and permission prompts, a per-workspace camera and microphone decision store, and a render-process wrapper that stops live capture. Direct CEF gives the control this needs (request contexts, pre-key-event handler, frame and render-process handlers).
