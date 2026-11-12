@@ -321,11 +321,33 @@ fn revoke_media(ws: &str) {
     println!("[m0] media decisions revoked for {ws} (store file deleted)");
 }
 
+// Tell workspace C's page process to stop its capture tracks of this kind ("all", "audio" or "video").
+fn stop_capture(kind: &str) {
+    let Some((_, bv)) = ST.with(|s| s.borrow().fresh.clone()) else { println!("[m0] no workspace C view to stop capture in"); return };
+    let Some(frame) = bv.browser().and_then(|b| b.main_frame()) else { return };
+    let Some(mut msg) = process_message_create(Some(&CefString::from("m0-stop-capture"))) else { return };
+    if let Some(args) = msg.argument_list() { args.set_string(0, Some(&CefString::from(kind))); }
+    frame.send_process_message(ProcessId::RENDERER, Some(&mut msg));
+    println!("[m0] sent the stop-capture command ({kind}) to workspace C's page process");
+}
+
 wrap_task! {
     struct AutoRevokeTask {}
     impl Task {
         fn execute(&self) {
-            revoke_media("ws-c");
+            let stop = arg("revoke-stop");
+            if stop == "audio" || stop == "video" {
+                // revoke just one kind: keep the other in the store
+                let bit = if stop == "audio" { MEDIA_AUDIO } else { MEDIA_VIDEO };
+                let mut st = media_load("ws-c");
+                for v in st.values_mut() { v.0 &= !bit; v.1 |= bit; }
+                media_save("ws-c", &st);
+                REVOKED.store(true, std::sync::atomic::Ordering::SeqCst);
+                println!("[m0] media decisions for {stop} revoked in ws-c (the other kind stays allowed)");
+            } else {
+                revoke_media("ws-c");
+            }
+            if !stop.is_empty() { stop_capture(if stop == "all" { "all" } else { &stop }); }
             if flag("revoke-reload") {
                 if let Some((_, bv)) = ST.with(|s| s.borrow().fresh.clone()) { if let Some(b) = bv.browser() { b.reload(); println!("[m0] workspace C reloaded after the revoke"); } }
             }
@@ -871,6 +893,13 @@ fn build_ui() {
 wrap_browser_process_handler! {
     struct SpikeBph {}
     impl BrowserProcessHandler {
+        // Custom switches are not passed on to child processes by themselves; the renderer needs to know about the wrapper variant.
+        fn on_before_child_process_launch(&self, command_line: Option<&mut CommandLine>) {
+            if let Some(cl) = command_line {
+                let w = arg("wrap");
+                if !w.is_empty() { cl.append_switch_with_value(Some(&CefString::from("wrap")), Some(&CefString::from(w.as_str()))); }
+            }
+        }
         fn on_context_initialized(&self) {
             let root = std::env::current_dir().unwrap().join(".m0-data").join("chromium-root");
             let n = if flag("single") || flag("sharectx") { 1 } else { 2 };
@@ -893,10 +922,77 @@ wrap_browser_process_handler! {
     }
 }
 
+// ---- render-process extension: wrap getUserMedia so streams can be stopped from the browser ----
+// Runs in every renderer when a frame's V8 context is created (the same exe is the renderer, see main()). The wrapper remembers the
+// streams getUserMedia hands out; a "m0-stop-capture" process message from the browser stops their tracks (all, or only audio or video)
+// and forwards the command to same-origin child frames. It lives in the page's own JS world, so a hostile page could tamper with it.
+const WRAP_JS_PROTO_BASE: &str = r#"(function(){
+  if (window.__m0wrapped) return; window.__m0wrapped = true;
+  var md = navigator.mediaDevices; if (!md || !md.getUserMedia) return;
+  var proto = Object.getPrototypeOf(md), orig = proto.getUserMedia, streams = [], extra = [];
+  /*CLONES*/
+  Object.defineProperty(proto, 'getUserMedia', { value: function(c){ return orig.call(this, c).then(function(st){ streams.push(st); return st; }); }, configurable: true, writable: true });
+  Object.defineProperty(window, Symbol.for('m0.stop'), { value: function(kind){
+    var n = 0;
+    function one(t){ if (t.readyState === 'live' && (kind === 'all' || t.kind === kind)) { t.stop(); n++; t.dispatchEvent(new Event('ended')); } }
+    streams.forEach(function(st){ st.getTracks().forEach(one); });
+    extra.forEach(one);
+    for (var i = 0; i < window.frames.length; i++) { try { var f = window.frames[i][Symbol.for('m0.stop')]; if (f) n += f(kind); } catch (e) {} }
+    return n;
+  } });
+})();"#;
+
+// The weaker variant patches only navigator.mediaDevices itself, so a page can reach the original through MediaDevices.prototype.
+const WRAP_JS_INSTANCE_ONLY: &str = r#"(function(){
+  if (window.__m0wrapped) return; window.__m0wrapped = true;
+  var md = navigator.mediaDevices; if (!md || !md.getUserMedia) return;
+  var orig = md.getUserMedia.bind(md), streams = [];
+  Object.defineProperty(md, 'getUserMedia', { value: function(c){ return orig(c).then(function(st){ streams.push(st); return st; }); }, configurable: true });
+  Object.defineProperty(window, Symbol.for('m0.stop'), { value: function(kind){
+    var n = 0;
+    streams.forEach(function(st){ st.getTracks().forEach(function(t){
+      if (t.readyState === 'live' && (kind === 'all' || t.kind === kind)) { t.stop(); n++; t.dispatchEvent(new Event('ended')); }
+    }); });
+    return n;
+  } });
+})();"#;
+
+// "full" adds: clones of a stream or of a track are tracked too (a page can clone to keep the camera after the original is stopped).
+const WRAP_CLONES_JS: &str = "var sc = MediaStream.prototype.clone; MediaStream.prototype.clone = function(){ var c = sc.call(this); streams.push(c); return c; }; var tc = MediaStreamTrack.prototype.clone; MediaStreamTrack.prototype.clone = function(){ var c = tc.call(this); extra.push(c); return c; };";
+
+wrap_render_process_handler! {
+    struct SpikeRender {}
+    impl RenderProcessHandler {
+        fn on_context_created(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, ctx: Option<&mut V8Context>) {
+            if let Some(c) = ctx {
+                let (mut rv, mut ex) = (None, None);
+                let variant = arg("wrap");
+                let js: String = match variant.as_str() {
+                    "instance" => WRAP_JS_INSTANCE_ONLY.to_string(),
+                    "proto" => WRAP_JS_PROTO_BASE.replace("/*CLONES*/", ""),
+                    _ => WRAP_JS_PROTO_BASE.replace("/*CLONES*/", WRAP_CLONES_JS),
+                };
+                c.eval(Some(&CefString::from(js.as_str())), None, 0, Some(&mut rv), Some(&mut ex));
+            }
+        }
+        fn on_process_message_received(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>, _src: ProcessId, msg: Option<&mut ProcessMessage>) -> i32 {
+            let Some(msg) = msg else { return 0 };
+            if CefString::from(&msg.name()).to_string() != "m0-stop-capture" { return 0 }
+            let kind = msg.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_else(|| "all".into());
+            if let Some(f) = frame {
+                let js = format!("(function(){{ var s = window[Symbol.for('m0.stop')]; return s ? s('{kind}') : -1; }})();");
+                f.execute_java_script(Some(&CefString::from(js.as_str())), None, 0);
+            }
+            1
+        }
+    }
+}
+
 wrap_app! {
     struct SpikeApp {}
     impl App {
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> { Some(SpikeBph::new()) }
+        fn render_process_handler(&self) -> Option<RenderProcessHandler> { Some(SpikeRender::new()) }
         // Finding: with two or more content browser views in one window the GPU process crashed three times at startup
         // (exit code 0x80000003, then it settled) on this machine. Turning DirectComposition off avoids it.
         fn on_before_command_line_processing(&self, process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
@@ -914,7 +1010,8 @@ fn main() {
     let args = cef::args::Args::new();
     let cmd = args.as_cmd_line().expect("command line");
     let is_browser = cmd.has_switch(Some(&CefString::from("type"))) != 1;
-    let ret = execute_process(Some(args.as_main_args()), None::<&mut App>, std::ptr::null_mut());
+    let mut app = SpikeApp::new();
+    let ret = execute_process(Some(args.as_main_args()), Some(&mut app), std::ptr::null_mut());
     if !is_browser { assert!(ret >= 0); return; }
     assert_eq!(ret, -1);
 
@@ -927,7 +1024,6 @@ fn main() {
         root_cache_path: CefString::from(root.to_string_lossy().as_ref()),
         ..Default::default()
     };
-    let mut app = SpikeApp::new();
     assert_eq!(initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()), 1);
     run_message_loop();
     shutdown();

@@ -49,3 +49,5 @@ the other panes' profiles. Needs node on PATH. The camera accept runs open a rea
 `mediastore.ps1` checks the app-owned camera/microphone decision store (ask, remember, destroy, restart, partial coverage, other workspace, revoke).
 It uses Chromium's fake capture devices, so no real camera or microphone is opened.
 `revoke.ps1` checks granting a subset of the requested media kinds and revoking while a stream is live (fake devices; no real camera or microphone).
+`wrapper.ps1` checks the render-process getUserMedia wrapper that stops a running stream from the browser (`-Only W5` etc. runs one scenario).
+Fake capture devices; no real camera or microphone is opened.

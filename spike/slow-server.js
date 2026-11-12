@@ -19,13 +19,25 @@ const pages = {
   '/notify': green('setTimeout(function(){ Notification.requestPermission(); }, 300)', '<b>N</b>'),
   '/clipboard': green('setTimeout(function(){ navigator.clipboard.readText().catch(function(){}); }, 300)', '<b>K</b>'),
   '/camera': green('setTimeout(function(){ navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(function(){}); }, 300)', '<b>M</b>'),
-  '/livecam': green(`var q = new URLSearchParams(location.search), who = q.get('who') || 'C';
+  '/livecam': green(`var q = new URLSearchParams(location.search), who = q.get('who') || 'C', both = q.get('kinds') === 'both';
 function rep(m){ fetch('/report?who=' + who + '&kind=live&msg=' + encodeURIComponent(m)).catch(function(){}); }
-navigator.mediaDevices.getUserMedia({ video: true }).then(function(st){
-  rep('stream granted'); var v = document.createElement('video'); v.muted = true; v.srcObject = st; v.play(); var n = 0;
+var c = both ? { video: true, audio: true } : { video: true }, retried = false;
+var evade = q.get('evade') === '1';
+if (q.get('tamper') === '1') { MediaStreamTrack.prototype.stop = function(){}; }
+function gum(cc){ return evade ? MediaDevices.prototype.getUserMedia.call(navigator.mediaDevices, cc) : navigator.mediaDevices.getUserMedia(cc); }
+function start(label){ return gum(c).then(function(st){
+  rep(label + 'stream granted: ' + st.getTracks().map(function(t){ return t.kind; }).join('+'));
+  var use = q.get('clone') === '1' ? st.clone() : st;
+  var v = document.createElement('video'); v.muted = true; v.srcObject = use; v.play(); var n = 0;
   function f(){ n++; v.requestVideoFrameCallback(f); } v.requestVideoFrameCallback(f);
-  var t = st.getVideoTracks()[0]; setInterval(function(){ rep('track=' + t.readyState + ' frames=' + n); }, 1000);
-}, function(e){ rep('denied ' + e.name); });`, '<b>L</b>'),
+  setInterval(function(){
+    var parts = use.getTracks().map(function(t){ return t.kind + '=' + t.readyState; }).join(' ');
+    rep(label + parts + ' frames=' + n);
+    if (!retried && use.getTracks().every(function(t){ return t.readyState === 'ended'; })) { retried = true; setTimeout(function(){ start('RETRY '); }, 1500); }
+  }, 1000);
+}, function(e){ rep(label + 'denied ' + e.name); }); }
+start('');`, '<b>L</b>'),
+  '/liveframe': '<!doctype html><body style="background:#0a0;margin:0"><iframe src="/livecam?who=Cframe" allow="camera; microphone" style="width:600px;height:300px;border:0"></iframe>',
   '/popped': green('', '<b>popup</b>'),
 };
 // /permcheck?kind=geo|notify|clipboard|camera&mode=request|query&who=C : reports the permission state before, asks for it

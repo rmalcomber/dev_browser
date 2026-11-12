@@ -317,8 +317,41 @@ app's revoke action must end the stream itself: reload or navigate the page, or 
 will happen. A gentler option (not tried) is a small render-process extension that wraps `getUserMedia`, remembers the streams it
 handed out and stops their tracks on a command from the browser; that is more work and more attack surface in the page's process.
 
-Not checked: that wrapper, revoking from a settings page while the page is in another workspace (it would need a reload on
+Not checked (the wrapper is in the next section): revoking from a settings page while the page is in another workspace (it would need a reload on
 activation), revoking only the microphone while the camera stays live, and a stream held by an iframe.
+
+### A render-process getUserMedia wrapper (checked 2026-11-12)
+
+The idea left open above: stop a running stream without reloading the page. The renderer process (the same exe, which now hands its
+app object to `execute_process` in every process) runs a small script in each frame's V8 context as it is created, before any page
+script. It wraps `getUserMedia`, remembers the streams it hands out, and on a `m0-stop-capture` process message from the browser
+(`all`, `audio` or `video`) stops their tracks, forwarding to same-origin child frames. Custom switches such as `--wrap=` are not passed
+to child processes on their own; `on_before_child_process_launch` has to add them. `spike/wrapper.ps1`, fake devices (no real camera or
+microphone opened). The page reports its tracks' `readyState` and a frame count every second.
+
+| Scenario | Wrapper | Result |
+| --- | --- | --- |
+| W1 control, no revoke | full | stream live, frames climbing: the wrapper does not break `getUserMedia` |
+| W2 revoke and stop all at 4 s | full | track `ended`, frame count frozen (73), the page's retry asked again and got `NotAllowedError` (the user denied): **the stream really stops, no reload** |
+| W3 camera + microphone, revoke only the microphone | full | `audio=ended video=live`, video frames keep climbing: **one kind can be revoked while the other stays live** |
+| W4 stream held by a same-origin iframe | full | the iframe's track ended too (forwarded by script); its retry was refused |
+| W5 page calls `MediaDevices.prototype.getUserMedia` directly | instance-only | **not stopped** (frames kept climbing): patching only `navigator.mediaDevices` is bypassable |
+| W6 same page | prototype | stopped |
+| W7 page clones the stream and uses only the clone | prototype, no clone tracking | **not stopped** (the clone is a separate track) |
+| W8 same page | full (also tracks `MediaStream.clone` and `MediaStreamTrack.clone`) | stopped |
+| W9 hostile page replaces `MediaStreamTrack.prototype.stop` with a no-op | full | **not stopped**: the stream stays live |
+
+Conclusion: the wrapper works for ordinary pages and gives a clean, no-reload revoke of the whole stream or just one kind, which
+is nicer than reloading. But it lives in the page's own JS world and a page that wants to keep the camera can defeat it (W9 is the
+simplest way; calling a captured original, legacy `navigator.getUserMedia`, `getDisplayMedia`, or WebRTC paths are others). So treat
+it as a courtesy for cooperative sites and keep a browser-side guarantee behind it: after a revoke, stop the stream with the wrapper,
+and if the page does not report its tracks ended (the wrapper can reply with the count, or the browser can check after a moment),
+reload, navigate away or discard the view. Never rely on it alone to honour a revoke.
+
+Not checked: cross-origin iframes (the forward is a script call and cannot cross origins; each frame would need its own process
+message, and this cef-rs build can only append to a string list, so listing frame ids needs another route), the legacy and
+screen-capture APIs, WebRTC peers that hold a clone, workers, popups, whether the wrapper changes page behaviour on real sites, and
+its cost per frame.
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 
