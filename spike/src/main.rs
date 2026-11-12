@@ -11,6 +11,7 @@ use std::cell::RefCell;
 
 const PANE_A: u8 = 0;
 const PANE_B: u8 = 1;
+const DIVIDER: u8 = 8;
 const OVERLAY: u8 = 9;
 const VK_P: i32 = 0x50;
 const VK_1: i32 = 0x31;
@@ -28,6 +29,11 @@ struct St {
     overlay_visible: bool,
     last_pane: usize,
     drag_seen: i32,
+    divider_view: Option<BrowserView>,
+    layout: Option<BoxLayout>,
+    div_seen: i32,
+    ratio: f32,
+    panel: Option<Panel>,
     ctxs: Vec<RequestContext>,
     ctx_ready: usize,
 }
@@ -42,7 +48,7 @@ fn flag(name: &str) -> bool {
     command_line_get_global().map(|c| c.has_switch(Some(&CefString::from(name))) == 1).unwrap_or(false)
 }
 fn role_name(role: u8) -> &'static str {
-    match role { PANE_A => "A", PANE_B => "B", _ => "overlay" }
+    match role { PANE_A => "A", PANE_B => "B", DIVIDER => "divider", _ => "overlay" }
 }
 
 fn set_overlay_visible(show: bool) {
@@ -104,6 +110,43 @@ fn on_overlay_title(t: &str) {
     }
 }
 
+// Divider -> Rust channel (same title trick as the overlay): "div:dx,n".
+// Views' BoxLayout flex weights did not re-flow when changed, so the three views are positioned by hand.
+const DIV_W: i32 = 6;
+const MIN_PANE: i32 = 120;
+
+fn relayout() {
+    let (panes, divider, ratio) = ST.with(|s| { let s = s.borrow(); (s.pane_views.clone(), s.divider_view.clone(), if s.ratio > 0.0 { s.ratio } else { 0.5 }) });
+    let (Some(divider), true) = (divider, panes.len() == 2) else { return };
+    let Some(panel) = ST.with(|s| s.borrow().panel.clone()) else { return };
+    let size = panel.size();
+    if size.width <= 0 || size.height <= 0 { return }
+    let avail = size.width - DIV_W;
+    let wa = ((avail as f32 * ratio) as i32).clamp(MIN_PANE, (avail - MIN_PANE).max(MIN_PANE));
+    panes[0].set_bounds(Some(&Rect { x: 0, y: 0, width: wa, height: size.height }));
+    divider.set_bounds(Some(&Rect { x: wa, y: 0, width: DIV_W, height: size.height }));
+    panes[1].set_bounds(Some(&Rect { x: wa + DIV_W, y: 0, width: avail - wa, height: size.height }));
+}
+
+fn on_divider_title(t: &str) {
+    let Some(rest) = t.strip_prefix("div:") else { return };
+    let p: Vec<i32> = rest.split(',').filter_map(|x| x.parse().ok()).collect();
+    if p.len() != 2 { return }
+    let panes = ST.with(|s| {
+        let mut s = s.borrow_mut();
+        if p[1] <= s.div_seen { return vec![]; }
+        s.div_seen = p[1];
+        s.pane_views.clone()
+    });
+    if panes.len() != 2 { return }
+    let (wa, wb) = (panes[0].bounds().width, panes[1].bounds().width);
+    let avail = wa + wb;
+    let new_a = (wa + p[0]).clamp(MIN_PANE, (avail - MIN_PANE).max(MIN_PANE));
+    ST.with(|s| s.borrow_mut().ratio = new_a as f32 / avail as f32);
+    relayout();
+    println!("[m0] divider moved: A {wa}px -> {}px, B {wb}px -> {}px", panes[0].bounds().width, panes[1].bounds().width);
+}
+
 wrap_keyboard_handler! {
     struct SpikeKeys { role: u8 }
     impl KeyboardHandler {
@@ -147,6 +190,7 @@ wrap_display_handler! {
         fn on_title_change(&self, _b: Option<&mut Browser>, title: Option<&CefString>) {
             let t = title.map(|t| t.to_string()).unwrap_or_default();
             if self.role == OVERLAY { on_overlay_title(&t); }
+            else if self.role == DIVIDER { on_divider_title(&t); }
             else if t.starts_with("[m0-ls]") { println!("{t}"); }
         }
     }
@@ -217,6 +261,25 @@ wrap_browser_view_delegate! {
     }
 }
 
+// A Panel without a layout: its children are positioned by hand in relayout().
+wrap_panel_delegate! {
+    struct SpikePanelDelegate {}
+    impl ViewDelegate {
+        fn on_layout_changed(&self, _v: Option<&mut View>, _b: Option<&Rect>) { relayout(); }
+    }
+    impl PanelDelegate {}
+}
+
+wrap_browser_view_delegate! {
+    struct SpikeDividerBvd {}
+    impl ViewDelegate {
+        fn preferred_size(&self, _v: Option<&mut View>) -> Size { Size { width: 6, height: 100 } }
+    }
+    impl BrowserViewDelegate {
+        fn browser_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::ALLOY }
+    }
+}
+
 wrap_window_delegate! {
     struct SpikeWindowDelegate {}
     impl ViewDelegate {
@@ -227,13 +290,19 @@ wrap_window_delegate! {
         fn on_window_created(&self, window: Option<&mut Window>) {
             let Some(window) = window else { return };
             let (panes, ov) = ST.with(|s| { let s = s.borrow(); (s.pane_views.clone(), s.overlay_view.clone()) });
-            // Test 5: two panes side by side in a horizontal box layout, equal flex.
-            let layout = window.set_to_box_layout(Some(&BoxLayoutSettings { horizontal: 1, between_child_spacing: 4, ..Default::default() }));
-            for bv in panes {
-                let mut v = View::from(&bv);
-                window.add_child_view(Some(&mut v));
-                if let Some(l) = layout.as_ref() { l.set_flex_for_view(Some(&mut v), 1); }
+            // Test 5: two panes with a draggable divider between them, positioned by hand (see relayout).
+            let divider = ST.with(|s| s.borrow().divider_view.clone());
+            let mut pd = SpikePanelDelegate::new();
+            let mut panel = panel_create(Some(&mut pd)).expect("panel");
+            for (i, bv) in panes.iter().enumerate() {
+                if i == 1 { if let Some(d) = divider.as_ref() { let mut dv = View::from(d); panel.add_child_view(Some(&mut dv)); } }
+                let mut v = View::from(bv);
+                panel.add_child_view(Some(&mut v));
             }
+            let mut pv = View::from(&panel);
+            window.add_child_view(Some(&mut pv));
+            ST.with(|s| s.borrow_mut().panel = Some(panel.clone()));
+            let layout: Option<BoxLayout> = None;
             // Test 2: overlay launcher above the live pages, custom docking, starts top-centre.
             let mut ctl = None;
             if let Some(ov) = ov {
@@ -244,9 +313,11 @@ wrap_window_delegate! {
                     c.set_visible(0);
                 }
             }
-            ST.with(|s| { let mut s = s.borrow_mut(); s.overlay = ctl; s.window = Some(window.clone()); });
+            ST.with(|s| { let mut s = s.borrow_mut(); s.overlay = ctl; s.layout = layout.clone(); s.window = Some(window.clone()); });
             window.show();
             if let Some(v) = ST.with(|s| s.borrow().pane_views.first().cloned()) { v.request_focus(); }
+            relayout();
+            let mut r = RelayoutTask::new(); post_delayed_task(ThreadId::UI, Some(&mut r), 300);
             let mut d = DumpTask::new(); post_delayed_task(ThreadId::UI, Some(&mut d), 2500);
             println!("[m0] window created");
         }
@@ -254,11 +325,27 @@ wrap_window_delegate! {
             ST.with(|s| { let mut s = s.borrow_mut(); s.pane_views.clear(); s.overlay_view = None; s.overlay = None; s.window = None; });
         }
         fn window_runtime_style(&self) -> RuntimeStyle { if !flag("chrome") { RuntimeStyle::ALLOY } else { RuntimeStyle::DEFAULT } }
+        fn on_window_bounds_changed(&self, _w: Option<&mut Window>, _b: Option<&Rect>) { relayout(); }
         fn can_close(&self, _w: Option<&mut Window>) -> i32 {
             let bs = ST.with(|s| s.borrow().browsers.clone());
             let mut ok = 1;
             for b in bs { if let Some(h) = b.host() { if h.try_close_browser() != 1 { ok = 0; } } }
             ok
+        }
+    }
+}
+
+wrap_task! {
+    struct RelayoutTask {}
+    impl Task { fn execute(&self) { relayout(); } }
+}
+
+wrap_task! {
+    struct WidthsTask {}
+    impl Task {
+        fn execute(&self) {
+            let panes = ST.with(|s| s.borrow().pane_views.clone());
+            if panes.len() == 2 { println!("[m0] widths after divider: A={} B={}", panes[0].bounds().width, panes[1].bounds().width); }
         }
     }
 }
@@ -270,6 +357,8 @@ wrap_task! {
             let (panes, ov, win) = ST.with(|s| { let s = s.borrow(); (s.pane_views.clone(), s.overlay_view.clone(), s.window.clone()) });
             if let Some(w) = win { let b = w.bounds(); println!("[m0] dump window {}x{}", b.width, b.height); }
             for (i, p) in panes.iter().enumerate() { let b = p.bounds(); println!("[m0] dump pane {} bounds=({},{} {}x{}) visible={} drawn={} has_browser={}", i, b.x, b.y, b.width, b.height, p.is_visible(), p.is_drawn(), p.browser().is_some()); }
+            let dvw = ST.with(|s| s.borrow().divider_view.clone());
+            if let Some(d) = dvw { let b = d.bounds(); println!("[m0] dump divider bounds=({},{} {}x{}) has_browser={}", b.x, b.y, b.width, b.height, d.browser().is_some()); }
             if let Some(o) = ov { let b = o.bounds(); println!("[m0] dump overlay view bounds=({},{} {}x{}) visible={} has_browser={}", b.x, b.y, b.width, b.height, o.is_visible(), o.browser().is_some()); }
         }
     }
@@ -284,6 +373,16 @@ wrap_task! {
             for b in bs { if let Some(h) = b.host() { h.close_browser(1); } }
         }
     }
+}
+
+fn divider_html() -> &'static str {
+    r#"<!doctype html><meta charset=utf-8><body style="margin:0;height:100vh;background:#8fdde8;cursor:col-resize;user-select:none;overflow:hidden">
+<script>
+var n=0,down=false,lx=0;
+document.body.onmousedown=function(e){down=true;lx=e.screenX;document.body.style.background='#ffd166';e.preventDefault();};
+addEventListener('mouseup',function(){down=false;document.body.style.background='#8fdde8';});
+addEventListener('mousemove',function(e){if(!down)return;var dx=e.screenX-lx;if(!dx)return;lx=e.screenX;document.title='div:'+dx+','+(++n);});
+</script>"#
 }
 
 fn overlay_html() -> &'static str {
@@ -331,7 +430,13 @@ fn build_ui() {
     let mut oclient = SpikeClient::new(OVERLAY);
     let mut bvd2 = if !flag("chrome") { Some(SpikeBvd::new()) } else { None };
     let ov = browser_view_create(Some(&mut oclient), Some(&CefString::from(ourl.as_str())), Some(&BrowserSettings::default()), None, None, bvd2.as_mut()).expect("overlay view");
-    ST.with(|s| { let mut s = s.borrow_mut(); s.pane_views = panes; s.overlay_view = Some(ov); });
+    let dpage = root.parent().unwrap().join("divider.html");
+    std::fs::write(&dpage, divider_html()).unwrap();
+    let durl = format!("file:///{}", dpage.to_string_lossy().replace("\\", "/"));
+    let mut dclient = SpikeClient::new(DIVIDER);
+    let mut dbvd = SpikeDividerBvd::new();
+    let dv = if panes.len() == 2 { browser_view_create(Some(&mut dclient), Some(&CefString::from(durl.as_str())), Some(&BrowserSettings::default()), None, None, Some(&mut dbvd)) } else { None };
+    ST.with(|s| { let mut s = s.borrow_mut(); s.pane_views = panes; s.overlay_view = Some(ov); s.divider_view = dv; });
 
     let secs: i64 = arg("exit-after").parse().unwrap_or(0);
     if secs > 0 { let mut t = ExitTask::new(); post_delayed_task(ThreadId::UI, Some(&mut t), secs * 1000); }

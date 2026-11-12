@@ -23,5 +23,5 @@ supports several browser views in one window); `--chrome` selects Chrome style. 
 Keys in the window: `Ctrl+P` toggles the overlay, `Esc` closes it, `Ctrl+1` / `Ctrl+2` focus a pane.
 
 `drive.ps1` launches the spike and sends real mouse and keyboard input (overlay drag, `Ctrl+P` from several focus states, `Escape`,
-`Ctrl+1/2`, pane clicks), then prints the `[m0]` log. It takes over the mouse and keyboard for about 30 seconds: leave them alone.
+`Ctrl+1/2`, pane clicks, divider drags), then prints the `[m0]` log. It takes over the mouse and keyboard for about 30 seconds: leave them alone.
 `testpage.html` is the page with a text input and an iframe that it loads in pane A.

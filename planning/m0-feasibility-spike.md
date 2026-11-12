@@ -29,7 +29,7 @@ lines of glue were needed, and what broke.
 | 2 | Overlay | **Pass for behaviour, not yet seen by eye.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created, shown and hidden over the live pages. A real mouse drag (`SendInput`) moved it by the expected steps (+10,+5 each, 12 steps) and the position is clamped to the window. Not checked: how it looks, drag after a window resize, 150% DPI, IME. |
 | 3 | `Ctrl+P` | **Pass in the cases run** (real key input via `SendInput`, read from the log): intercepted with focus in a page text input, in the iframe test area, and in the other pane; the page never saw it (`on_pre_key_event` returned handled). `Escape` closes the overlay and focus returns to the pane that had it (A or B). Not checked: that no print dialog flashes (the key is consumed before the page, so it should not), pages with their own `Ctrl+P` handler, a focused PDF viewer, non-US keyboard layouts. |
 | 4 | Two sessions | Two request contexts with distinct `cache_path` under one `root_cache_path`. Sign in to GitHub as two identities; both survive an app restart; cookies are not shared. | Both account names visible after restart |
-| 5 | Two panes | **Mostly pass.** In Alloy style both panes and the overlay are created and laid out side by side (588x681 each). Mouse clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane (confirmed by focus events), and the overlay returns focus to the right one. In Chrome style only the first browser view gets a browser. Not done: a draggable divider (Views has no splitter), the coloured outline, flash-free pane/workspace swaps (needs eyes). |
+| 5 | Two panes | **Pass for behaviour, not yet seen by eye.** In Alloy style both panes, a draggable divider and the overlay work in one window. Real mouse drags of the divider resized the panes (+150, -300, then -400 which stopped at the 120px minimum, with A+B constant). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane and the overlay returns focus to the right one. In Chrome style only the first browser view gets a browser. Not done: coloured outline, saving the divider position, window-resize behaviour, flash-free pane swaps (needs eyes). |
 
 Use throwaway test accounts or a non-sensitive login where possible; never record credentials in this repo.
 
@@ -90,13 +90,17 @@ native window from the tooling used, so anything visual or typed is marked **not
 - `cef` 156.4.0 from crates.io cannot build as is: its CEF download fails because the CDN `index.json` is over the 10 MB
   response limit in `download-cef`; cef-rs master has the same limit. Worked around with a local patch when exporting CEF.
 - Windows needs CMake and Ninja as well as Visual Studio. The minimal CEF runtime is about 426 MB extracted.
+- **Divider.** Views has no splitter and `BoxLayout` flex weights did not re-flow when changed. The spike uses a 6px
+  third browser view as the divider (it reports mouse drags through the page title, like the overlay) inside a layout-less
+  `Panel` whose three children are positioned by hand and re-positioned on `on_layout_changed`. A native-looking handle
+  can come later; this proves the mechanism.
 - Closing: Chrome style exits cleanly; in Alloy style the process did not exit after closing every browser (window
   teardown still to sort out).
 
 ### Next steps for M0
 
 1. Look at the window once by eye (overlay position and look, no print dialog, no flashes) and try 150% DPI and a resize.
-   Add a draggable divider. Input automation lives in `spike/drive.ps1` (it takes over the mouse and keyboard while it runs).
+   Check resizing the window with the divider moved, and persist the divider position. Input automation lives in `spike/drive.ps1` (it takes over the mouse and keyboard while it runs).
 2. Fix Alloy shutdown; try a real login cookie flow (not just localStorage) for test 4.
 3. List which Chrome-only features we lose with Alloy-style views (downloads, permissions, printing, extensions) and
    keep the style choice behind one function so a CEF change is a small edit.

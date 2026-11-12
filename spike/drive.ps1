@@ -57,6 +57,18 @@ Mark 'T5b: click into pane A (mouse focus), then Ctrl+1'
 Click ($o.X + 150) ($o.Y + 400); Chord 0x31 -Ctrl
 Mark 'T5c: click into pane B'
 Click ($o.X + $cw - 150) ($o.Y + 400)
+Mark 'Divider: drag right by 150px, then left by 300px, then back (real mouse)'
+Flush
+$line = Get-Content (Join-Path $dir 'drive.out') | Where-Object { $_ -match 'dump divider bounds=' } | Select-Object -First 1
+if ($line -match 'bounds=\((\d+),(\d+) (\d+)x(\d+)\)') { $dx0 = [int]$Matches[1]; $dw = [int]$Matches[3]
+  $sx = $o.X + $dx0 + [int]($dw / 2); $sy = $o.Y + 300
+  function DragBy([int]$from, [int]$by) { [W]::SetCursorPos($from, $sy) | Out-Null; Start-Sleep -Milliseconds 250; [W]::mouse_event(2,0,0,0,[UIntPtr]::Zero); Start-Sleep -Milliseconds 250
+    $steps = 15; foreach ($i in 1..$steps) { [W]::SetCursorPos([int]($from + $by * $i / $steps), $sy) | Out-Null; Start-Sleep -Milliseconds 40 }
+    [W]::mouse_event(4,0,0,0,[UIntPtr]::Zero); Start-Sleep -Milliseconds 700 }
+  DragBy $sx 150; $sx2 = $sx + 150; Mark 'divider after +150'
+  DragBy $sx2 -300; Mark 'divider after -300'
+  $sx3 = $sx2 - 300; DragBy $sx3 -400; Mark 'divider after a further -400 (should clamp at the 120px minimum)'
+} else { Add-Content $log 'no divider bounds found' }
 Start-Sleep -Seconds 2
 if (-not $p.HasExited) { $p | Wait-Process -Timeout 90 -ErrorAction SilentlyContinue }
 Flush
