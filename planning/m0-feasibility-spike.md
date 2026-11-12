@@ -26,10 +26,10 @@ lines of glue were needed, and what broke.
 | # | Test | Pass means | Evidence |
 | --- | --- | --- | --- |
 | 1 | Embed and navigate | A page loads, back/forward work, event loop is stable on resize and close. | Screenshot, notes |
-| 2 | Overlay | **Pass for behaviour, not yet seen by eye.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created, shown and hidden over the live pages. A real mouse drag (`SendInput`) moved it by the expected steps (+10,+5 each, 12 steps) and the position is clamped to the window. Not checked: IME, real OS-level DPI (see below). |
-| 3 | `Ctrl+P` | **Pass in the cases run** (real key input via `SendInput`, read from the log): intercepted with focus in a page text input, in the iframe test area, and in the other pane; the page never saw it (`on_pre_key_event` returned handled). `Escape` closes the overlay and focus returns to the pane that had it (A or B). Not checked: that no print dialog flashes (the key is consumed before the page, so it should not), pages with their own `Ctrl+P` handler, a focused PDF viewer, non-US keyboard layouts. |
+| 2 | Overlay | A browser-owned draggable panel renders above a live page; dragging is smooth; works at 100% and 150% DPI and after resize. IME and focus noted. | Screen capture |
+| 3 | `Ctrl+P` | Opens our overlay, never the print dialog, while the page, an input, and an iframe have focus. `Escape` returns focus to the prior element. | Pre-key-event handler notes |
 | 4 | Two sessions | Two request contexts with distinct `cache_path` under one `root_cache_path`. Sign in to GitHub as two identities; both survive an app restart; cookies are not shared. | Both account names visible after restart |
-| 5 | Two panes | **Pass, seen by eye (screenshots) and by log.** In Alloy style both panes, a draggable divider and the overlay work in one window. A real mouse drag of the divider resizes the panes smoothly (+150, -300, then -400 stopping at the 120px minimum). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane. In Chrome style only the first browser view gets a browser. 20 screenshots over a few seconds settle to one steady frame. Window resize with the divider moved works, each pane has a workspace-coloured outline that follows focus, and the divider position is saved and restored (see below). Workspace swaps show no flash in the cases tried (see below). |
+| 5 | Two panes | Two views side by side with a draggable divider; click and keyboard focus go to the right view; `Ctrl+1/2` focus switch works; no flash of the wrong view when swapping. | Screen capture |
 
 Use throwaway test accounts or a non-sensitive login where possible; never record credentials in this repo.
 
@@ -58,16 +58,18 @@ privacy model).
 
 ## Results so far (2026-11-12, Windows 11, candidate A: cef-rs 156.5.0 / CEF 156.0.28, Views framework)
 
-Code is in `spike/` (see its README). Checked from `[m0]` log lines and the files on disk only: I cannot see or drive the
-native window from the tooling used, so anything visual or typed is marked **not yet verified by eye**.
+Code is in `spike/` (see its README). Checked three ways: the `[m0]` log lines, real mouse and keyboard input sent with `SendInput`, and
+screenshots or 60 fps captures of the spike's own window (`spike/shot.ps1`, `flicker.ps1`, `flash.ps1`). Where something was only
+checked one of those ways, the row says so. Details and the evidence for each line are in the sections below.
 
 | # | Test | Result |
 | --- | --- | --- |
-| 1 | Embed and navigate | **Pass.** Window opens, `https://example.com/` loads (HTTP 200). |
-| 2 | Overlay | **Partial.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created and loads its page. Dragging (a title-channel hack to move it) is coded, **not yet verified by eye**. |
-| 3 | `Ctrl+P` | **Coded, not yet run.** `on_pre_key_event` toggles the overlay and consumes the key; needs real key input into a focused window. |
-| 4 | Two sessions | **Pass (Alloy style).** Each workspace gets its own profile directory under the common root (`ws-a/`, `ws-b/`, each with its own `Local Storage`). A value written in A is still there after a restart and pane B never sees it, both runs. Authentication cookies not tried yet; localStorage on the same origin is the same storage partition test. |
-| 5 | Two panes | **Partial.** In Alloy style both panes and the overlay are created and laid out side by side (588x681 each). In Chrome style only the first browser view ever gets a browser. No divider drag yet (Views has no splitter). Focus switching and `Ctrl+1/2` are coded, **not yet verified by eye**. |
+| 1 | Embed and navigate | **Pass.** Window opens, pages load, one click on X closes cleanly. |
+| 2 | Overlay | **Pass.** A browser-owned overlay view hosts its own page above the live panes, shows and hides, and a real mouse drag moves it in the expected steps and clamps it to the window. At a 1.5 device scale factor it behaves the same. Not checked: IME (no IME installed), real OS-level DPI scaling and mixed-DPI monitors. |
+| 3 | `Ctrl+P` | **Pass.** Intercepted with focus in a page input, an iframe and the other pane; the page never sees it; `Escape` restores focus to the right pane; same at 1.5 scale. Not checked: pages with their own `Ctrl+P` handler, a focused PDF viewer, non-US layouts, a print dialog flashing (the key is consumed first). |
+| 4 | Two sessions | **Pass in Alloy style.** One request context per workspace with its own profile directory; a value written in A survives a restart and never reaches B; permissions and the camera and microphone store are per workspace too. The two bugs that made it look blocked were a path-separator mismatch and creating the view before the asynchronous profile was ready. Real logins (cookies) were not tried. |
+| 5 | Two panes | **Pass.** Two panes, a draggable divider with a saved position, workspace-coloured outlines that follow focus, resize with the divider moved, and workspace swaps (existing, new, destroyed-and-recreated views) with no flash at 60 fps once a dark browser background replaced a white first frame. Chrome style only hosts one browser view per window; Alloy style, which CEF supports for this, hosts several. |
+
 
 ### Why test 4 looked blocked, and what fixed it
 
@@ -590,9 +592,18 @@ clicks on X. Screenshots of the spike's own window (`spike/shot.ps1`, `spike/fli
 
 ### Next steps for M0
 
-1. Look at the window once by eye (overlay position and look, no print dialog, no flashes) and try 150% DPI and a resize.
-   Check resizing the window with the divider moved, and persist the divider position. Input automation lives in `spike/drive.ps1` (it takes over the mouse and keyboard while it runs).
-2. Fix Alloy shutdown; try a real login cookie flow (not just localStorage) for test 4.
-3. List which Chrome-only features we lose with Alloy-style views (downloads, permissions, printing, extensions) and
-   keep the style choice behind one function so a CEF change is a small edit.
-4. Time-box candidate B (Tauri with CEF) against the same five tests only if A cannot reach a pass.
+Everything the five tests ask for has a written result on Windows with candidate A (direct CEF through cef-rs). What is left before the
+exit decision, and before M1:
+
+1. **Record the decision** in `docs/ai/decisions.md`: candidate A is viable on Windows. Candidate B (Tauri with CEF) was never tried and
+   only needs doing if A is rejected for another reason; say so explicitly rather than leaving it open.
+2. **Close the gaps the checks could not reach:** IME (needs an IME installed), real OS-level DPI scaling and mixed-DPI monitors, a real
+   login to a real site in two workspaces, and the first non-Windows platform.
+3. **Measure and publish the cost** the spec asks for: installed size of the runtime plus our binary, memory at rest and with several
+   workspaces, start-up time, and the Chromium update procedure.
+4. **Understand the open oddities:** the GPU process that crashed at start-up until DirectComposition was switched off (root cause and
+   cost unknown), and what happens when the app's own processes are killed.
+5. **Turn the findings into M1 design notes** (they are written up above): the app owns dialogs and permission prompts, a per-workspace
+   media decision store, the stop-capture wrapper plus a browser-side reload fallback, discard and recreate of views, per-frame stop
+   commands, and key handling that does not depend on a page's view having focus.
+
