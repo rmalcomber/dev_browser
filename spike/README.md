@@ -16,7 +16,7 @@ limit (`.with_config().limit(256 * 1024 * 1024)` before `read_json()`) and run `
 ./run.ps1 --selftest-write           # pane A writes a localStorage marker (test 4 probe)
 ```
 
-Flags: `--url-a= --url-b= --single --chrome --selftest-write --exit-after=SECS`. Alloy style is the default (it is the one that
+Flags: `--url-a= --url-b= --single --chrome --noov --nodiv --selftest-write --exit-after=SECS`. Alloy style is the default (it is the one that
 supports several browser views in one window); `--chrome` selects Chrome style. Output lines start with `[m0]`.
 `cwd` matters: Chromium data goes in `.m0-data/` under the current directory (git-ignored).
 
@@ -25,3 +25,7 @@ Keys in the window: `Ctrl+P` toggles the overlay, `Esc` closes it, `Ctrl+1` / `C
 `drive.ps1` launches the spike and sends real mouse and keyboard input (overlay drag, `Ctrl+P` from several focus states, `Escape`,
 `Ctrl+1/2`, pane clicks, divider drags), then prints the `[m0]` log. It takes over the mouse and keyboard for about 30 seconds: leave them alone.
 `testpage.html` is the page with a text input and an iframe that it loads in pane A.
+
+`shot.ps1` saves a screenshot of the spike's window (it makes the window topmost first so the picture holds only the spike).
+`flicker.ps1` takes a series of screenshots and counts distinct frames: 1 means steady. Both take extra app flags as one string,
+e.g. `-AppArgs '--url-a=data:text/html,<body%20style=background:red>'`. Keep the images out of the repo.

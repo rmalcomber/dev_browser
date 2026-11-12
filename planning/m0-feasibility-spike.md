@@ -29,7 +29,7 @@ lines of glue were needed, and what broke.
 | 2 | Overlay | **Pass for behaviour, not yet seen by eye.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created, shown and hidden over the live pages. A real mouse drag (`SendInput`) moved it by the expected steps (+10,+5 each, 12 steps) and the position is clamped to the window. Not checked: how it looks, drag after a window resize, 150% DPI, IME. |
 | 3 | `Ctrl+P` | **Pass in the cases run** (real key input via `SendInput`, read from the log): intercepted with focus in a page text input, in the iframe test area, and in the other pane; the page never saw it (`on_pre_key_event` returned handled). `Escape` closes the overlay and focus returns to the pane that had it (A or B). Not checked: that no print dialog flashes (the key is consumed before the page, so it should not), pages with their own `Ctrl+P` handler, a focused PDF viewer, non-US keyboard layouts. |
 | 4 | Two sessions | Two request contexts with distinct `cache_path` under one `root_cache_path`. Sign in to GitHub as two identities; both survive an app restart; cookies are not shared. | Both account names visible after restart |
-| 5 | Two panes | **Pass for behaviour, not yet seen by eye.** In Alloy style both panes, a draggable divider and the overlay work in one window. Real mouse drags of the divider resized the panes (+150, -300, then -400 which stopped at the 120px minimum, with A+B constant). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane and the overlay returns focus to the right one. In Chrome style only the first browser view gets a browser. Not done: coloured outline, saving the divider position, window-resize behaviour, flash-free pane swaps (needs eyes). |
+| 5 | Two panes | **Pass, seen by eye (screenshots) and by log.** In Alloy style both panes, a draggable divider and the overlay work in one window. A real mouse drag of the divider resizes the panes smoothly (+150, -300, then -400 stopping at the 120px minimum). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane. In Chrome style only the first browser view gets a browser. 20 screenshots over a few seconds settle to one steady frame. Not done: coloured outline, saving the divider position, window resize with the divider moved, flash-free *workspace* swaps. |
 
 Use throwaway test accounts or a non-sensitive login where possible; never record credentials in this repo.
 
@@ -78,6 +78,24 @@ native window from the tooling used, so anything visual or typed is marked **not
    returns `None` until `RequestContextHandler::on_request_context_initialized` has fired. Create the browser views from
    that callback (the spike builds its UI once every context is ready).
 
+### What looking at it found (2026-11-12, after the log-only passes above)
+
+Roy ran it and saw a blank left pane, flicker (the left page jumping over the right one) and a window that needed two
+clicks on X. Screenshots of the spike's own window (`spike/shot.ps1`, `spike/flicker.ps1`) reproduced the first two.
+
+- **Blank left pane / flicker.** Giving the panes and divider their position by hand (`set_bounds` in a panel with no
+  layout) painted wrongly: the first-added pane showed only its background colour (no text), and in another order the
+  left page's content flickered over the right pane about half the time. A box layout on the panel fixed both. Resizing
+  needs the layout re-installed with new sizes; flex weights alone were ignored for browser views, so the panes report the
+  wanted width as their preferred size (`SpikePaneBvd`) and use flex 0. Cause of the hand-positioning problem not found.
+- **Two clicks to close.** Each browser answers `try_close_browser` with "not yet" the first time and CEF retries the
+  window close for only one of them. The spike now retries the window close itself every 150 ms until all agree; one click
+  on X closes it (checked with a real mouse click). This also fixed the earlier Alloy hang on exit.
+- **GPU process crashes at startup.** The log shows the GPU process exiting unexpectedly three times in the first second
+  (exit code 0x80000003) before settling. It is not the cause of the blank pane: with `--disable-gpu` there were no crashes and the pane was still blank.
+  Worth understanding before relying on it.
+- **Lesson:** log lines said "pass" while the screen was wrong. Keep the screenshot check (`flicker.ps1`) in the loop.
+
 ### Findings worth keeping
 
 - **Chrome vs Alloy style (support horizon checked 2026-11-12).** Chrome style gave a browser only for the first
@@ -90,12 +108,9 @@ native window from the tooling used, so anything visual or typed is marked **not
 - `cef` 156.4.0 from crates.io cannot build as is: its CEF download fails because the CDN `index.json` is over the 10 MB
   response limit in `download-cef`; cef-rs master has the same limit. Worked around with a local patch when exporting CEF.
 - Windows needs CMake and Ninja as well as Visual Studio. The minimal CEF runtime is about 426 MB extracted.
-- **Divider.** Views has no splitter and `BoxLayout` flex weights did not re-flow when changed. The spike uses a 6px
-  third browser view as the divider (it reports mouse drags through the page title, like the overlay) inside a layout-less
-  `Panel` whose three children are positioned by hand and re-positioned on `on_layout_changed`. A native-looking handle
-  can come later; this proves the mechanism.
-- Closing: Chrome style exits cleanly; in Alloy style the process did not exit after closing every browser (window
-  teardown still to sort out).
+- **Divider.** Views has no splitter. The spike uses a 6px third browser view as the divider (it reports mouse drags
+  through the page title, like the overlay) in a `Panel` with a box layout that is re-installed on each change (see above).
+  A native-looking handle can come later; this proves the mechanism.
 
 ### Next steps for M0
 
