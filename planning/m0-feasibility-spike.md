@@ -444,8 +444,33 @@ What it does not cover: a hostile page can still defeat it (the W9 limit: all it
 backstop (reload, navigate away or discard if the page does not report its tracks ended) is still required; calls made through paths the
 wrapper does not patch (legacy and screen-capture APIs); and a request that is pending in a frame the stop never reaches.
 
-Not checked: a revoke of one kind while a two-kind request is pending (the code stops just that kind), many pending calls at once, and
-the cost of the extra bookkeeping on real pages.
+Not checked here (a one-kind revoke while a two-kind request is pending is in the next section): many pending calls at once, and the cost of the
+extra bookkeeping on real pages.
+
+### Revoking one kind while a camera-and-microphone request is pending (checked 2026-11-12)
+
+The page asks for camera and microphone together; the app decides to grant both but delivers the grant 4 s late; 0.5 s after the
+decision it revokes one kind (`--grant-n=1 --revoke-after-grant-ms=500 --delay-grant-ms=4000`), with the stop sent once. `wrapper.ps1`
+`-Only K -Sweep kind-pending|kind-full`, fake devices.
+
+| Revoke | Pending-call wrapper (default) | Edge-triggered wrapper | Store afterwards (allowed, denied) |
+| --- | --- | --- | --- |
+| microphone only | stream arrives with `audio=ended video=live`, video frames keep climbing | both tracks live | `2, 1`: camera allowed, microphone denied |
+| camera only | stream arrives with `audio=live video=ended`, video frozen | both tracks live | `1, 2` |
+| all | the call is rejected with `NotAllowedError`, no stream | both tracks live | store file deleted |
+
+So the pending-call wrapper honours a partial revoke of a request that is still waiting: the revoked kind is stopped the moment the
+stream resolves, the other kind keeps running, and the store records exactly that. The edge-triggered wrapper loses all three cases.
+
+Two behaviours to decide on for the real app. First, the page gets a stream whose revoked track is already `ended` (and no `ended`
+event fires, because the track was never live when the page first saw it); the alternative is to remove the track from the stream so
+it holds only the allowed kind, which fits a page that checks `getAudioTracks()[0]` but may break one that expects both. An ended
+track matches what a live revoke looks like, so the spike keeps it. Second, when a request mixes allowed and revoked kinds the page's
+next request for both will now be refused as a whole (all or nothing, from earlier), so a site that wants to carry on must ask for the
+allowed kind alone; that is the standard way to handle a denied microphone, but it is worth a visible hint in the real prompt UI.
+
+Not checked: two pending calls with different kinds at once (the marking logic only touches calls that asked for the revoked kind),
+a revoke arriving after only one of the two tracks has been created, and a pending call in an iframe other than the one the stop reached.
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 

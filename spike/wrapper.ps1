@@ -43,7 +43,10 @@ function Scenario($label, $url, $flags) {
   if ($Only -and $label -notmatch "^($Only).") { return }
   Remove-Item -Recurse -Force .m0-data -ErrorAction SilentlyContinue
   $p, $h = Launch $label $url 'accept' $flags
-  Chord 0x34; Start-Sleep 13; Show; CloseGracefully $p $h
+  Chord 0x34; Start-Sleep 13; Show
+  $store = Join-Path $dir '.m0-data\workspaces\ws-c\media-permissions.txt'
+  if (Test-Path $store) { '    store ws-c: ' + ((Get-Content $store) -join ' ; ' -replace "`t", ' ') }
+  CloseGracefully $p $h
 }
 Scenario 'W1. control: wrapper installed, camera stream live, NO revoke (the wrapper must not break getUserMedia)' "$base/livecam?who=C" @()
 Scenario 'W2. camera stream; revoke + stop-capture all at 4 s; the user now denies, so the page cannot get a stream again' "$base/livecam?who=C" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
@@ -94,6 +97,13 @@ if ($Sweep -like 'slow-*') {
   # a slow grant: the new document's grant is delivered 4 s late, the revoke + stop fires 500 ms after it was decided, so the stream appears long after every repeat of the stop
   $variant = $Sweep -replace '^slow-', ''
   Scenario "D1. the grant is delivered 4000 ms late, the revoke 500 ms after the decision, wrapper $variant" "$base/livecam?who=Nr&navat=2500&navto=http%3A%2F%2Flocalhost%3A$Port%2Flivecam%3Fwho%3DNr2" @('--revoke-after-grant-ms=500', '--delay-grant-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny', "--wrap=$variant")
+}
+if ($Sweep -like 'kind-*') {
+  # a camera+microphone request is pending (its grant is delivered 4 s late) when one kind is revoked 0.5 s after the decision
+  $variant = $Sweep -replace '^kind-', ''
+  foreach ($k in 'audio', 'video', 'all') {
+    Scenario "K-$k. two-kind request pending, revoke $k, wrapper $variant" "$base/livecam?who=Cp&kinds=both" @('--grant-n=1', '--revoke-after-grant-ms=500', '--delay-grant-ms=4000', "--revoke-stop=$k", '--answer-after-revoke=deny', '--stop-once', "--wrap=$variant")
+  }
 }
 Get-Process m0_spike -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue

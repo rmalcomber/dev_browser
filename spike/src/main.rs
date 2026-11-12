@@ -584,13 +584,14 @@ wrap_permission_handler! {
                     if grant != 0 && (grant == requested || flag("grant-subset")) {
                         let n = GRANTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                         let ms = arg("revoke-after-grant-ms");
-                        if n == 2 && !ms.is_empty() {
+                        let gn: u32 = arg("grant-n").parse().unwrap_or(2);
+                        if n == gn && !ms.is_empty() {
                             let mut t = AutoRevokeTask::new();
                             post_delayed_task(ThreadId::UI, Some(&mut t), ms.parse::<i64>().unwrap_or(0));
                             println!("[m0] revoke scheduled {ms} ms after the second grant");
                         }
                         let dl: i64 = arg("delay-grant-ms").parse().unwrap_or(0);
-                        if dl > 0 && n >= 2 {
+                        if dl > 0 && n >= gn {
                             let mut t = DelayedGrantTask::new((*cb).clone(), grant);
                             post_delayed_task(ThreadId::UI, Some(&mut t), dl);
                             println!("[m0]   -> granting {} but delivering it {dl} ms late", bits_name(grant));
