@@ -1,6 +1,6 @@
 ---
 title: Releases
-description: Release notes for every version of dev_browser, mirrored from GitHub releases.
+description: Release notes for every version of The Dev Browser, mirrored from GitHub releases.
 sidebar:
   order: 0
   label: All releases
@@ -16,7 +16,7 @@ Every page mirrors its GitHub release: [Releases on GitHub]({{releases}}).
 
 | Version | Status | Highlights |
 |---|---|---|
-| [0.1.0-beta](/dev_browser/releases/v0.1.0-beta/) | Latest | First release |
+| [0.1.0-alpha](/dev_browser/releases/v0.1.0-alpha/) | Latest | Planning release: design and docs |
 
 ## How versions work
 

@@ -1,6 +1,6 @@
 ---
 title: Contributing
-description: How to build, test and send a change to dev_browser.
+description: How to build, test and send a change to The Dev Browser.
 sidebar:
   order: 1
 ---
@@ -9,7 +9,8 @@ Contributions are welcome. The repository's `CONTRIBUTING.md` is the source of t
 
 ## Before you start
 
-Say what the project's budget is (size, dependencies) and when to open an [issue]({{repo}}/issues) first.
+The budget follows the Floppy Rule: everything we write stays small and dependency-light. Chromium is the one deliberate,
+large exception. Open an [issue]({{repo}}/issues) before adding a dependency or changing a public interface.
 
 ## Build and test
 

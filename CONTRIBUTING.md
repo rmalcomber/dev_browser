@@ -1,4 +1,4 @@
-# Contributing to dev_browser
+# Contributing to The Dev Browser
 
 Contributions are welcome. Full guidance is on the docs site: https://rmalcomber.github.io/dev_browser/project/contributing/
 

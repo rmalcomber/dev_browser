@@ -5,17 +5,17 @@ import metrics from './data/metrics.json' with { type: 'json' }
 const repoUrl = 'https://github.com/rmalcomber/dev_browser'
 
 export const site = {
-  name: 'dev_browser',
-  tagline: 'dev_browser',
+  name: 'The Dev Browser',
+  tagline: 'A personal developer browser with workspaces, a built-in launcher and tools',
   // GitHub Pages project site; override with DOCS_BASE=/ for a root deployment (custom domain, Docker).
   site: process.env.DOCS_SITE ?? 'https://rmalcomber.github.io',
   base: process.env.DOCS_BASE ?? '/dev_browser',
   repoUrl,
   releasesUrl: `${repoUrl}/releases`,
   // Keep in step with the project's real version (Cargo.toml, package.json, git tag) when releasing.
-  version: '0.1.0-beta',
-  // 'beta' adds a BETA badge to the release banner; use 'stable' once the project is 1.0.
-  stage: 'beta',
+  version: '0.1.0-alpha',
+  // 'alpha' or 'beta' adds a badge to the release banner; use 'stable' once the project is 1.0.
+  stage: 'alpha',
   support: {
     coffee: 'https://buymeacoffee.com/rmalcomber',
     sponsors: 'https://github.com/sponsors/rmalcomber',

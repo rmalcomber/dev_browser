@@ -1,5 +1,5 @@
 {
-  "size": "to be measured",
-  "platforms": "Windows, Linux, macOS",
-  "dependencies": "none"
+  "size": "to be measured (Chromium runtime is large)",
+  "platforms": "Windows first; Linux and macOS later",
+  "dependencies": "none planned for users"
 }

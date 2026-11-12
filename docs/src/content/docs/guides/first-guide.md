@@ -1,12 +1,15 @@
 ---
-title: A first guide
-description: Task-oriented how-to. Rename or delete this page.
+title: Guides
+description: Task-oriented how-tos, added as features ship.
 sidebar:
   order: 1
 ---
 
-Guides answer "how do I...?". One task per page.
+Guides answer "how do I...?", one task per page. None exist yet because nothing has shipped.
 
-:::tip
-Use `:::note`, `:::tip` and `:::caution` asides sparingly.
-:::
+Planned first guides, in the order the features arrive:
+
+- Create workspaces and sign in to the same site as two identities.
+- Find anything with the launcher, and widen its scope safely.
+- Decode a JWT from a selection and pin the tool.
+- Use split view across two workspaces.

@@ -1,4 +1,4 @@
-# dev_browser docs
+# The Dev Browser docs
 
 Astro + Starlight site. Dark by default, one theme file (`src/styles/theme.css`).
 
