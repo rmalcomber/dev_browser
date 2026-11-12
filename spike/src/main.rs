@@ -146,6 +146,7 @@ fn relayout() {
     let (mut va, mut vd, mut vb) = (View::from(&panes[0]), View::from(&divider), View::from(&panes[1]));
     for v in [&mut va, &mut vd, &mut vb] { layout.set_flex_for_view(Some(v), 0); }
     ST.with(|s| s.borrow_mut().pane_w = [wa, avail - wa]);
+    println!("[m0] relayout: panel {}x{} -> A={wa}px divider={DIV_W}px B={}px (ratio {:.3})", size.width, size.height, avail - wa, wa as f32 / avail as f32);
     va.invalidate_layout();
     vb.invalidate_layout();
     panel.invalidate_layout();

@@ -29,7 +29,7 @@ lines of glue were needed, and what broke.
 | 2 | Overlay | **Pass for behaviour, not yet seen by eye.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created, shown and hidden over the live pages. A real mouse drag (`SendInput`) moved it by the expected steps (+10,+5 each, 12 steps) and the position is clamped to the window. Not checked: how it looks, drag after a window resize, 150% DPI, IME. |
 | 3 | `Ctrl+P` | **Pass in the cases run** (real key input via `SendInput`, read from the log): intercepted with focus in a page text input, in the iframe test area, and in the other pane; the page never saw it (`on_pre_key_event` returned handled). `Escape` closes the overlay and focus returns to the pane that had it (A or B). Not checked: that no print dialog flashes (the key is consumed before the page, so it should not), pages with their own `Ctrl+P` handler, a focused PDF viewer, non-US keyboard layouts. |
 | 4 | Two sessions | Two request contexts with distinct `cache_path` under one `root_cache_path`. Sign in to GitHub as two identities; both survive an app restart; cookies are not shared. | Both account names visible after restart |
-| 5 | Two panes | **Pass, seen by eye (screenshots) and by log.** In Alloy style both panes, a draggable divider and the overlay work in one window. A real mouse drag of the divider resizes the panes smoothly (+150, -300, then -400 stopping at the 120px minimum). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane. In Chrome style only the first browser view gets a browser. 20 screenshots over a few seconds settle to one steady frame. Not done: coloured outline, saving the divider position, window resize with the divider moved, flash-free *workspace* swaps. |
+| 5 | Two panes | **Pass, seen by eye (screenshots) and by log.** In Alloy style both panes, a draggable divider and the overlay work in one window. A real mouse drag of the divider resizes the panes smoothly (+150, -300, then -400 stopping at the 120px minimum). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane. In Chrome style only the first browser view gets a browser. 20 screenshots over a few seconds settle to one steady frame. Window resize with the divider moved also works (see below). Not done: coloured outline, saving the divider position, flash-free *workspace* swaps. |
 
 Use throwaway test accounts or a non-sensitive login where possible; never record credentials in this repo.
 
@@ -77,6 +77,14 @@ native window from the tooling used, so anything visual or typed is marked **not
 2. **Asynchronous profile creation.** With a valid path CEF creates the profile asynchronously, and `browser_view_create`
    returns `None` until `RequestContextHandler::on_request_context_initialized` has fired. Create the browser views from
    that callback (the spike builds its UI once every context is ready).
+
+### Resize with the divider moved (checked 2026-11-12)
+
+`spike/resize.ps1` drags the divider with the real mouse (+150px), then resizes the window and reads the `[m0] relayout` lines
+and screenshots. The split ratio held at 0.626 across three window sizes: 1184px wide gave A=738 / B=440, 884px gave A=550 /
+B=328, and 1484px gave A=925 / B=553 (the 6px divider is excluded). Both pages reflowed to their new widths and the
+screenshots showed no blank pane or overlap. Not checked: dragging the divider after a resize, minimum widths at very small
+window sizes, 150% DPI.
 
 ### What looking at it found (2026-11-12, after the log-only passes above)
 

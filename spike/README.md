@@ -29,3 +29,4 @@ Keys in the window: `Ctrl+P` toggles the overlay, `Esc` closes it, `Ctrl+1` / `C
 `shot.ps1` saves a screenshot of the spike's window (it makes the window topmost first so the picture holds only the spike).
 `flicker.ps1` takes a series of screenshots and counts distinct frames: 1 means steady. Both take extra app flags as one string,
 e.g. `-AppArgs '--url-a=data:text/html,<body%20style=background:red>'`. Keep the images out of the repo.
+`resize.ps1` moves the divider with the mouse, then resizes the window and prints the `[m0] relayout` lines (add `-OutDir` for screenshots).
