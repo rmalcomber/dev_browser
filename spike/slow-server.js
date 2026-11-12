@@ -40,6 +40,15 @@ start('');`, '<b>L</b>'),
   '/liveframe': '<!doctype html><body style="background:#0a0;margin:0"><iframe src="/livecam?who=Cframe" allow="camera; microphone" style="width:600px;height:300px;border:0"></iframe>',
   '/liveframe-x': green("var f = document.createElement('iframe'); f.src = 'http://localhost:' + location.port + '/livecam?who=Cx'; f.allow = 'camera; microphone'; f.style.cssText = 'width:600px;height:300px;border:0'; document.body.appendChild(f);", ''),
   '/liveframe-s': green("var f = document.createElement('iframe'); f.src = 'http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Cs'; f.allow = 'camera; microphone'; f.style.cssText = 'width:600px;height:300px;border:0'; document.body.appendChild(f);", ''),
+  '/frame-mid': green("var f = document.createElement('iframe'); f.src = 'http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Cn'; f.allow = 'camera; microphone'; f.style.cssText = 'width:500px;height:250px;border:0'; document.body.appendChild(f);", ''),
+  '/liveframe-nested': green("var f = document.createElement('iframe'); f.src = 'http://localhost:' + location.port + '/frame-mid'; f.allow = 'camera; microphone'; f.style.cssText = 'width:500px;height:250px;border:0'; document.body.appendChild(f);", ''),
+  '/liveframes-late': green(`function mk(src, delay, remove){ setTimeout(function(){ var f = document.createElement('iframe'); f.src = src; f.allow = 'camera; microphone'; f.style.cssText = 'width:300px;height:200px;border:0'; document.body.appendChild(f); if (remove) setTimeout(function(){ f.remove(); }, remove); }, delay); }
+mk('/livecam?who=Cl1', 0);
+mk('http://localhost:' + location.port + '/livecam?who=Cl2', 1500);
+mk('http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Cl3', 2200, 500);`, ''),
+  '/liveframes-odd': green(`var code = "navigator.mediaDevices.getUserMedia({video:true}).then(function(st){ fetch('/report?who=Csrc&kind=live&msg=granted'); setInterval(function(){ var t = st.getVideoTracks()[0]; fetch('/report?who=Csrc&kind=live&msg=video=' + t.readyState); }, 1000); }, function(e){ fetch('/report?who=Csrc&kind=live&msg=denied+' + e.name); });";
+var s = document.createElement('iframe'); s.allow = 'camera; microphone'; s.srcdoc = '<script>' + code + '<\\/script>'; s.style.cssText = 'width:300px;height:100px;border:0'; document.body.appendChild(s);
+var sb = document.createElement('iframe'); sb.sandbox = 'allow-scripts'; sb.allow = 'camera; microphone'; sb.src = '/livecam?who=Csb'; sb.style.cssText = 'width:300px;height:100px;border:0'; document.body.appendChild(sb);`, ''),
   '/popped': green('', '<b>popup</b>'),
 };
 // /permcheck?kind=geo|notify|clipboard|camera&mode=request|query&who=C : reports the permission state before, asks for it

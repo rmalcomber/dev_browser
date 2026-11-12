@@ -30,8 +30,8 @@ function Launch($label, $urlC, $answer, $extra) {
   Write-Host "--- $label"; return @($p, $h)
 }
 function Show([switch]$Page = $true) {
-  if (Test-Path $srvlog) { Get-Content $srvlog | Where-Object { $_ -match ' report (C[a-z]*|B|A) ' -and $_ -notmatch 'state-before.*(A|B) camera' } | ForEach-Object { '    page: ' + (($_ -split ' report ', 2)[1]) }; Clear-Content $srvlog }
-  $lines = @(Get-Content revoke.out -ErrorAction SilentlyContinue | Where-Object { $_ -match 'media (request|store|decisions)|  -> |reloaded' })
+  if (Test-Path $srvlog) { Get-Content $srvlog | Where-Object { $_ -match ' report (C[a-z0-9]*|B|A) ' -and $_ -notmatch 'state-before.*(A|B) camera' } | ForEach-Object { '    page: ' + (($_ -split ' report ', 2)[1]) }; Clear-Content $srvlog }
+  $lines = @(Get-Content revoke.out -ErrorAction SilentlyContinue | Where-Object { $_ -match 'media (request|store|decisions)|  -> |reloaded|stop-capture' })
   @($lines | Select-Object -Skip $script:seen) | ForEach-Object { '    app:  ' + ($_ -replace '^\[m0\] ', '' -replace 'http://127.0.0.1:\d+', '') }
   $script:seen = $lines.Count
 }
@@ -58,6 +58,9 @@ Scenario 'X1. stream in a cross-ORIGIN iframe (same site, other port); stop sent
 Scenario 'X2. the same page; stop sent to EVERY frame (frame handler list)' "$base/liveframe-s" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
 Scenario 'X3. stream in a cross-SITE iframe (localhost, probably its own renderer process); stop sent to the main frame only' "$base/liveframe-x" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny', '--stop-main-only')
 Scenario 'X4. the same cross-site page; stop sent to EVERY frame' "$base/liveframe-x" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'N1. nested: top page -> iframe on localhost -> iframe on port+1 holds the stream; stop sent to every frame' "$base/liveframe-nested" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'N2. frames added late: one at the start, one on another site at 1.5 s, one created then removed again before the stop' "$base/liveframes-late" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'N3. a srcdoc iframe and a sandboxed iframe (opaque origin) each try to hold a stream' "$base/liveframes-odd" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
 Get-Process m0_spike -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
 Remove-Item revoke.out, revoke.err, $srvlog -ErrorAction SilentlyContinue

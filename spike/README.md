@@ -52,3 +52,4 @@ It uses Chromium's fake capture devices, so no real camera or microphone is open
 `wrapper.ps1` checks the render-process getUserMedia wrapper that stops a running stream from the browser (`-Only W5` etc. runs one scenario).
 Fake capture devices; no real camera or microphone is opened.
 `wrapper.ps1 -Only "X[1234]"` runs the cross-origin and cross-site iframe stop checks (the test server also listens on port+1 and on ::1 so `localhost` is a second site).
+`wrapper.ps1 -Only "N[123]"` runs the nested, late-added and srcdoc/sandboxed iframe stop checks.

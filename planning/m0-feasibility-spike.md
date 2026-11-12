@@ -372,8 +372,24 @@ arrived with the **iframe's own origin** (`http://localhost:...`), so a store ke
 widget and the page that embeds it as separate grants, and the real app should decide whether to key on (top-level origin,
 requesting origin); and the same-origin iframe case from before is covered by the same list, so the script forwarding is no longer needed.
 
-Not checked: nested cross-origin frames, frames added or removed while a stream is live, `srcdoc` and `about:blank` frames, sandboxed
-iframes without `allow-same-origin`, and any page that tampers with the wrapper (the W9 limit still applies in every frame).
+Not checked here (nested, late, `srcdoc` and sandboxed frames are in the next section): the page-tampering limit (W9 still applies in every frame).
+
+### Nested, late and odd frames (checked 2026-11-12)
+
+The cases the cross-origin section left open, same harness (`wrapper.ps1 -Only "N[123]"`, fake devices, stop sent to every frame):
+
+| Scenario | Frames the command reached | Result |
+| --- | --- | --- |
+| N1 nested chain: top page, then an iframe on `localhost`, then an iframe on another port holding the stream | 3 (top, middle, inner) | inner track `ended`, frame count frozen, retry refused |
+| N2 frames added late: one at the start, one on another site at 1.5 s, one created at 2.2 s and removed again 0.5 s later | 3 (top and the two still alive; the removed one had been pruned from the list) | both live frames ended (the late one had 48 frames to the early one's 72) and both were refused on retry |
+| N3 a `srcdoc` iframe and a sandboxed iframe with an opaque origin (`allow-scripts` only) | 3 (top, srcdoc, sandboxed) | srcdoc: stream granted, then `ended` after the stop; sandboxed: `getUserMedia` was refused by Chromium itself with `SecurityError` (not a secure context), so it never held a stream |
+
+So the per-frame list from the `FrameHandler` callbacks copes with nesting, late-created frames and frames removed mid-stream, and
+the wrapper is installed in `srcdoc` frames as well. Sandboxed opaque-origin frames cannot capture at all.
+
+Not checked: a frame that navigates to another site while it streams (its old document dies with the stream; the new one gets a fresh
+wrapper), frames in popups or other windows of the same workspace, very deep or very many frames, the cost of keeping the list, and
+the page-tampering limit (W9), which still applies inside every frame.
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 
