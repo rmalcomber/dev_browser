@@ -362,6 +362,12 @@ fn send_stop(kind: &str, round: &str) {
     println!("[m0] sent the stop-capture command ({kind}, {round}) to {sent} frame(s) of workspace C's page");
 }
 
+// --delay-grant-ms=N: answer the media request N ms late, as a slow device open or a late user answer would, for the 2nd grant onward.
+wrap_task! {
+    struct DelayedGrantTask { cb: MediaAccessCallback, grant: u32 }
+    impl Task { fn execute(&self) { self.cb.cont(self.grant); println!("[m0]   -> the delayed grant was delivered"); } }
+}
+
 wrap_task! {
     struct AutoRevokeTask {}
     impl Task {
@@ -582,6 +588,13 @@ wrap_permission_handler! {
                             let mut t = AutoRevokeTask::new();
                             post_delayed_task(ThreadId::UI, Some(&mut t), ms.parse::<i64>().unwrap_or(0));
                             println!("[m0] revoke scheduled {ms} ms after the second grant");
+                        }
+                        let dl: i64 = arg("delay-grant-ms").parse().unwrap_or(0);
+                        if dl > 0 && n >= 2 {
+                            let mut t = DelayedGrantTask::new((*cb).clone(), grant);
+                            post_delayed_task(ThreadId::UI, Some(&mut t), dl);
+                            println!("[m0]   -> granting {} but delivering it {dl} ms late", bits_name(grant));
+                            return 1;
                         }
                         cb.cont(grant); println!("[m0]   -> granted {}{}", bits_name(grant), if grant != requested { " (a subset of what was asked)" } else { "" }); }
                     else { cb.cancel(); println!("[m0]   -> refused (granted would be {})", bits_name(grant)); }
@@ -984,11 +997,12 @@ wrap_browser_process_handler! {
 const WRAP_JS_PROTO_BASE: &str = r#"(function(){
   if (window.__m0wrapped) return; window.__m0wrapped = true;
   var md = navigator.mediaDevices; if (!md || !md.getUserMedia) return;
-  var proto = Object.getPrototypeOf(md), orig = proto.getUserMedia, streams = [], extra = [];
+  var proto = Object.getPrototypeOf(md), orig = proto.getUserMedia, streams = [], extra = [], pending = [], sticky = null;
   /*CLONES*/
-  Object.defineProperty(proto, 'getUserMedia', { value: function(c){ return orig.call(this, c).then(function(st){ streams.push(st); return st; }); }, configurable: true, writable: true });
+  Object.defineProperty(proto, 'getUserMedia', { value: function(c){ /*GUM*/ }, configurable: true, writable: true });
   Object.defineProperty(window, Symbol.for('m0.stop'), { value: function(kind){
     var n = 0;
+    /*STOPEXTRA*/
     function one(t){ if (t.readyState === 'live' && (kind === 'all' || t.kind === kind)) { t.stop(); n++; t.dispatchEvent(new Event('ended')); } }
     streams.forEach(function(st){ st.getTracks().forEach(one); });
     extra.forEach(one);
@@ -1015,6 +1029,17 @@ const WRAP_JS_INSTANCE_ONLY: &str = r#"(function(){
 // "full" adds: clones of a stream or of a track are tracked too (a page can clone to keep the camera after the original is stopped).
 const WRAP_CLONES_JS: &str = "var sc = MediaStream.prototype.clone; MediaStream.prototype.clone = function(){ var c = sc.call(this); streams.push(c); return c; }; var tc = MediaStreamTrack.prototype.clone; MediaStreamTrack.prototype.clone = function(){ var c = tc.call(this); extra.push(c); return c; };";
 
+// Level-triggered variants (they differ in what a stop does to requests that are not finished yet):
+//  full    : edge-triggered, only the streams that already exist when the stop arrives (the previous behaviour)
+//  sticky  : after a stop, every stream created later in this frame is killed, forever (shown for comparison: it also kills a retry the user allowed)
+//  pending : a stop also marks the getUserMedia calls that were already started and are still waiting; when one of those resolves it is
+//            stopped (or rejected). Calls started after the stop are not touched, so a retry the user allowed works.
+const GUM_PLAIN: &str = "return orig.call(this, c).then(function(st){ streams.push(st); return st; });";
+const GUM_STICKY: &str = "return orig.call(this, c).then(function(st){ if (sticky) { st.getTracks().forEach(function(t){ if (sticky === 'all' || t.kind === sticky) t.stop(); }); if (st.getTracks().every(function(t){ return t.readyState === 'ended'; })) throw new DOMException('Permission revoked', 'NotAllowedError'); } streams.push(st); return st; });";
+const STOPEXTRA_STICKY: &str = "sticky = kind;";
+const GUM_PENDING: &str = "var self = this, call = { c: c, dead: null }; pending.push(call); function done(){ var i = pending.indexOf(call); if (i >= 0) pending.splice(i, 1); } return orig.call(self, c).then(function(st){ done(); if (call.dead) { var k = call.dead; st.getTracks().forEach(function(t){ if (k === 'all' || t.kind === k) t.stop(); }); if (st.getTracks().every(function(t){ return t.readyState === 'ended'; })) throw new DOMException('Permission revoked while the request was pending', 'NotAllowedError'); } streams.push(st); return st; }, function(e){ done(); throw e; });";
+const STOPEXTRA_PENDING: &str = "pending.forEach(function(p){ var wants = kind === 'all' || (kind === 'audio' && p.c && p.c.audio) || (kind === 'video' && p.c && p.c.video); if (wants) p.dead = (p.dead && p.dead !== kind) ? 'all' : kind; });";
+
 wrap_render_process_handler! {
     struct SpikeRender {}
     impl RenderProcessHandler {
@@ -1024,8 +1049,10 @@ wrap_render_process_handler! {
                 let variant = arg("wrap");
                 let js: String = match variant.as_str() {
                     "instance" => WRAP_JS_INSTANCE_ONLY.to_string(),
-                    "proto" => WRAP_JS_PROTO_BASE.replace("/*CLONES*/", ""),
-                    _ => WRAP_JS_PROTO_BASE.replace("/*CLONES*/", WRAP_CLONES_JS),
+                    "proto" => WRAP_JS_PROTO_BASE.replace("/*CLONES*/", "").replace("/*GUM*/", GUM_PLAIN).replace("/*STOPEXTRA*/", ""),
+                    "full" => WRAP_JS_PROTO_BASE.replace("/*CLONES*/", WRAP_CLONES_JS).replace("/*GUM*/", GUM_PLAIN).replace("/*STOPEXTRA*/", ""),
+                    "sticky" => WRAP_JS_PROTO_BASE.replace("/*CLONES*/", WRAP_CLONES_JS).replace("/*GUM*/", GUM_STICKY).replace("/*STOPEXTRA*/", STOPEXTRA_STICKY),
+                    _ => WRAP_JS_PROTO_BASE.replace("/*CLONES*/", WRAP_CLONES_JS).replace("/*GUM*/", GUM_PENDING).replace("/*STOPEXTRA*/", STOPEXTRA_PENDING),
                 };
                 c.eval(Some(&CefString::from(js.as_str())), None, 0, Some(&mut rv), Some(&mut ex));
             }

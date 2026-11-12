@@ -407,7 +407,7 @@ the page-tampering limit (W9), which still applies inside every frame.
   fixed time showed the same loss at two of five navigation times. Stopping is idempotent, so the browser now repeats the command
   (immediately and at +300, +600 and +900 ms; `--stop-once` turns that off to reproduce). With the repeats every offset ended the stream.
 
-Design recommendation, not built: make the wrapper level-triggered instead of repeating on a timer. After a stop for a frame, the
+Design recommendation (built and compared in the next section): make the wrapper level-triggered instead of repeating on a timer. After a stop for a frame, the
 wrapper remembers "revoked" and stops any stream that appears later in that frame (however long `getUserMedia` takes), until the
 browser sends an allow message when it next grants. The timer version covers a 0.9 s window; a slow device open or a permission
 answered late could still slip past it. The browser-side backstop (reload, navigate away or discard the view if the page has not
@@ -415,6 +415,37 @@ reported its tracks ended) stays necessary regardless, because of the page-tampe
 
 Not checked: frames navigating inside popups or other windows, `history` navigations and bfcache restores, a stream surviving a
 same-document navigation (it should), a very slow device open, and the allow-message design above.
+
+### A level-triggered wrapper (checked 2026-11-12)
+
+The design recommended above, built and compared. Three wrapper variants, `--wrap=full|sticky|pending`; the stop is sent **once**
+(`--stop-once`) so the wrapper alone decides:
+
+- **full** (edge-triggered, what there was): a stop affects only streams that already exist.
+- **sticky**: after a stop, every stream created later in that frame is killed, for good.
+- **pending** (now the default): a stop also marks the `getUserMedia` calls that were already started and are still waiting; when one of
+  those resolves, its tracks are stopped and the call is rejected with `NotAllowedError` (or, if only one kind was revoked, only that kind
+  is stopped). Calls started after the stop are untouched.
+
+| Case | full | sticky | pending |
+| --- | --- | --- | --- |
+| stop 0 ms after the new document's grant | **stream live** | rejected | rejected |
+| stop 40 ms and 120 ms after the grant | ended | ended | ended |
+| the user re-allows after the revoke and the page retries | stream works | **retry refused (wrongly)** | stream works |
+| grant delivered 4 s late (a slow device or a late answer), stop sent at 0.5 s and repeated to 2.3 s | **stream granted and live for good** | (not run) | rejected, no stream |
+
+So: the edge-triggered wrapper loses the race at 0 ms and cannot cope with a slow grant at all, even with the timed repeats; the sticky
+wrapper fixes the race but also kills a retry the user has legitimately allowed, which makes it unusable (it would need an "allow"
+message from the browser, with its own ordering race); the pending-call wrapper gets all four right with no extra message, because it
+ties the revoke to the requests that were in flight when it happened rather than to the clock or to a flag. The repeated stop stays in the
+spike as a harmless backstop for streams that already exist.
+
+What it does not cover: a hostile page can still defeat it (the W9 limit: all its state lives in the page's JS world), so the browser-side
+backstop (reload, navigate away or discard if the page does not report its tracks ended) is still required; calls made through paths the
+wrapper does not patch (legacy and screen-capture APIs); and a request that is pending in a frame the stop never reaches.
+
+Not checked: a revoke of one kind while a two-kind request is pending (the code stops just that kind), many pending calls at once, and
+the cost of the extra bookkeeping on real pages.
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 

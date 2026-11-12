@@ -54,3 +54,4 @@ Fake capture devices; no real camera or microphone is opened.
 `wrapper.ps1 -Only "X[1234]"` runs the cross-origin and cross-site iframe stop checks (the test server also listens on port+1 and on ::1 so `localhost` is a second site).
 `wrapper.ps1 -Only "N[123]"` runs the nested, late-added and srcdoc/sandboxed iframe stop checks.
 `wrapper.ps1 -Only "N[45]"` checks frames navigating mid-stream; `-Only G -Sweep grant-once|grant-repeat` and `-Only S -Sweep once|repeat` sweep the revoke against a navigation or a grant to show the lost-stop race and the repeated-stop fix.
+`wrapper.ps1 -Only "(L|R)" -Sweep level-full|sticky|pending` compares the wrapper variants against a stop that races a grant and against a retry the user allowed; `-Only D1 -Sweep slow-full|pending` uses a grant delivered 4 s late.
