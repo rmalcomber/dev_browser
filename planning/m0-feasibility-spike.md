@@ -3,7 +3,7 @@
 **Goal:** answer, with evidence, whether a Rust host can embed Chromium with per-workspace sessions, a browser-owned
 overlay, reliable shortcut interception and two panes. Throwaway code is fine; the output is a decision, not a product.
 
-**Status:** in progress (see Results at the end). Needs Roy's approval before any dependency is added or CEF is downloaded (AGENTS.md).
+**Status:** done on Windows with candidate A; the decision is recorded in `docs/ai/decisions.md` (2026-11-12). What is left is in "Next steps for M0" at the end. Needs Roy's approval before any dependency is added or CEF is downloaded (AGENTS.md).
 
 ## Decisions needed before starting
 

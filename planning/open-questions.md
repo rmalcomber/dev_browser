@@ -5,8 +5,8 @@ linking it here.
 
 | # | Question | Why it matters | Next step | Decider |
 | --- | --- | --- | --- | --- |
-| 1 | Direct CEF bindings or Tauri with CEF? | Shapes the whole codebase; maturity, windowing, packaging, GPU. | M0 spike | Roy, after evidence |
-| 2 | First supported OS? | Each OS is a separate test and packaging commitment. | Proposed: Windows. Confirm. | Roy |
+| 1 | ~~Direct CEF bindings or Tauri with CEF?~~ **Answered 2026-11-12:** direct CEF through cef-rs; see `docs/ai/decisions.md`. Tauri with CEF was not tried. | Shaped the whole codebase. | Done | Roy |
+| 2 | First supported OS? | Each OS is a separate test and packaging commitment. | The spike ran on Windows and passed; Roy to confirm Windows as the first supported OS. | Roy |
 | 3 | Does a browser-owned overlay survive two live Chromium views (layering, focus, drag, IME, DPI)? | The launcher is the headline feature. | M0 test 2, 3, 5 | Evidence |
 | 4 | Do per-workspace `cache_path` values persist logins across restarts without leaking? | Core promise of workspaces. | M0 test 4 | Evidence |
 | 5 | How is selected text read across frames, iframes and internal pages, with consent? | Context-aware tools depend on it. | Design in M3 | Roy |

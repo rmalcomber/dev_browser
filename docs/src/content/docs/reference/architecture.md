@@ -60,8 +60,8 @@ designed to be repeatable or recoverable.
 | Area | Direction | Status |
 |---|---|---|
 | Core | Rust | Agreed |
-| Rendering | Chromium via CEF | Agreed direction; bindings to validate |
-| Shell | Direct CEF, or Tauri with CEF | To validate |
+| Rendering | Chromium via CEF | Agreed; validated in the M0 spike (Windows) |
+| Shell | Direct CEF through the cef-rs bindings, Alloy-style views | Decided after the M0 spike (Windows) |
 | Data | SQLite per workspace by responsibility | Agreed |
 | UI | Reuse Home Screen TypeScript concepts | Agreed intention |
 | Tool isolation | Restricted model designed up front | Required; format deferred |

@@ -3,18 +3,19 @@
 Derived from spec sections 10 and 11. Sequence matters: **prove Chromium, workspace-isolated sessions, the shortcut/overlay
 and two panes before polishing anything** (spec section 4). Each milestone ends with its docs updated and a build that passes.
 
-## M0: Chromium feasibility spike (status: not started)
+## M0: Chromium feasibility spike (status: done on Windows, decision recorded 2026-11-12)
 
 Detail in [m0-feasibility-spike.md](m0-feasibility-spike.md).
 
-- [ ] Embed Chromium under Rust, navigate a page, run the platform event loop.
-- [ ] Browser-owned draggable overlay on top of a live page.
-- [ ] `Ctrl+P` intercepted reliably, even when the page has keyboard focus.
-- [ ] Two independently authenticated sessions (separate request contexts and cache paths) in one window.
-- [ ] Side-by-side views with correct focus handling.
+- [x] Embed Chromium under Rust, navigate a page, run the platform event loop.
+- [x] Browser-owned draggable overlay on top of a live page.
+- [x] `Ctrl+P` intercepted reliably, even when the page has keyboard focus.
+- [x] Two independently authenticated sessions (separate request contexts and cache paths) in one window.
+- [x] Side-by-side views with correct focus handling.
 
 **Exit:** all five work on the chosen runtime and first platform. Otherwise reconsider the shell integration before growing
-the codebase. Outcome recorded in `docs/ai/decisions.md` (direct CEF vs Tauri with CEF).
+the codebase. Outcome recorded in `docs/ai/decisions.md`: direct CEF through cef-rs, Alloy-style views, Windows validated.
+Left over from M0 (see the spike notes): IME, real OS-level DPI, a real two-workspace login, the first non-Windows platform, and the size and memory numbers.
 
 ## M1: Browser and workspace foundation
 
