@@ -387,9 +387,34 @@ The cases the cross-origin section left open, same harness (`wrapper.ps1 -Only "
 So the per-frame list from the `FrameHandler` callbacks copes with nesting, late-created frames and frames removed mid-stream, and
 the wrapper is installed in `srcdoc` frames as well. Sandboxed opaque-origin frames cannot capture at all.
 
-Not checked: a frame that navigates to another site while it streams (its old document dies with the stream; the new one gets a fresh
-wrapper), frames in popups or other windows of the same workspace, very deep or very many frames, the cost of keeping the list, and
+Not checked here (navigation is in the next section): frames in popups or other windows of the same workspace, very deep or very many frames, the cost of keeping the list, and
 the page-tampering limit (W9), which still applies inside every frame.
+
+### Frames that navigate while streaming, and a lost stop (checked 2026-11-12)
+
+`wrapper.ps1` scenarios N4 to N8 and the sweeps, fake devices, stop sent to every frame:
+
+- **A cross-site iframe that navigates to another origin mid-stream (N4).** The first attempt was refused: with `allow="camera; microphone"
+  the iframe's permission is delegated only to the origin it was loaded from, so after navigating elsewhere the new document got
+  `NotAllowedError` from the permissions policy and the app was never asked. That is correct browser behaviour, not a spike bug.
+  With `allow="camera *; microphone *"` the new document streamed (the old stream died with its document) and the stop reached it and
+  ended it (2 frames: top and the iframe).
+- **The main frame navigating cross-site mid-stream (N5).** The old stream died with its document, the new document in the new
+  renderer streamed, and the stop reached its wrapper and ended it; the retry was refused. Nothing needed the old frame object.
+- **A stop that is lost.** With the stop sent once, a revoke fired 0 ms after the new document's grant left its stream **live**: the
+  message reached the renderer before the stream existed (grant answered, stream still being created), so there was nothing to stop,
+  and nothing stopped it later. 40, 120 and 400 ms after the grant it worked. A timing sweep of the navigation against a revoke at a
+  fixed time showed the same loss at two of five navigation times. Stopping is idempotent, so the browser now repeats the command
+  (immediately and at +300, +600 and +900 ms; `--stop-once` turns that off to reproduce). With the repeats every offset ended the stream.
+
+Design recommendation, not built: make the wrapper level-triggered instead of repeating on a timer. After a stop for a frame, the
+wrapper remembers "revoked" and stops any stream that appears later in that frame (however long `getUserMedia` takes), until the
+browser sends an allow message when it next grants. The timer version covers a 0.9 s window; a slow device open or a permission
+answered late could still slip past it. The browser-side backstop (reload, navigate away or discard the view if the page has not
+reported its tracks ended) stays necessary regardless, because of the page-tampering limit.
+
+Not checked: frames navigating inside popups or other windows, `history` navigations and bfcache restores, a stream surviving a
+same-document navigation (it should), a very slow device open, and the allow-message design above.
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 

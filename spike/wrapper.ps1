@@ -1,7 +1,7 @@
 # Render-process getUserMedia wrapper check (fake capture devices: no real camera or microphone is opened). Four scenarios: a control with
 # the wrapper installed and no revoke; revoke + stop-capture (all) then a retry that the user denies; revoke only the microphone while the
 # camera stays live; and a stream held by a same-origin iframe. Needs node on PATH. Takes over the keyboard briefly. Disposable.
-param([string]$Exe = (Join-Path $PSScriptRoot 'target/debug/m0_spike.exe'), [int]$Port = 18777, [string]$Only = '')
+param([string]$Exe = (Join-Path $PSScriptRoot 'target/debug/m0_spike.exe'), [int]$Port = 18777, [string]$Only = '', [string]$Sweep = '')
 Add-Type @'
 using System; using System.Runtime.InteropServices;
 public static class R3 { [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
@@ -30,7 +30,7 @@ function Launch($label, $urlC, $answer, $extra) {
   Write-Host "--- $label"; return @($p, $h)
 }
 function Show([switch]$Page = $true) {
-  if (Test-Path $srvlog) { Get-Content $srvlog | Where-Object { $_ -match ' report (C[a-z0-9]*|B|A) ' -and $_ -notmatch 'state-before.*(A|B) camera' } | ForEach-Object { '    page: ' + (($_ -split ' report ', 2)[1]) }; Clear-Content $srvlog }
+  if (Test-Path $srvlog) { Get-Content $srvlog | Where-Object { $_ -match ' report (C[a-z0-9]*|N[a-z0-9]*|B|A) ' -and $_ -notmatch 'state-before.*(A|B) camera' } | ForEach-Object { '    page: ' + (($_ -split ' report ', 2)[1]) }; Clear-Content $srvlog }
   $lines = @(Get-Content revoke.out -ErrorAction SilentlyContinue | Where-Object { $_ -match 'media (request|store|decisions)|  -> |reloaded|stop-capture' })
   @($lines | Select-Object -Skip $script:seen) | ForEach-Object { '    app:  ' + ($_ -replace '^\[m0\] ', '' -replace 'http://127.0.0.1:\d+', '') }
   $script:seen = $lines.Count
@@ -61,6 +61,26 @@ Scenario 'X4. the same cross-site page; stop sent to EVERY frame' "$base/livefra
 Scenario 'N1. nested: top page -> iframe on localhost -> iframe on port+1 holds the stream; stop sent to every frame' "$base/liveframe-nested" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
 Scenario 'N2. frames added late: one at the start, one on another site at 1.5 s, one created then removed again before the stop' "$base/liveframes-late" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
 Scenario 'N3. a srcdoc iframe and a sandboxed iframe (opaque origin) each try to hold a stream' "$base/liveframes-odd" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'N4. a cross-site iframe streams, then navigates to another origin at 2.5 s (the new page streams too); stop at 4 s' "$base/nav-iframe" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'N5. the MAIN frame streams, then navigates to another site at 2.5 s; stop at 4 s' "$base/livecam?who=Nm&navat=2500&navto=http%3A%2F%2Flocalhost%3A$Port%2Flivecam%3Fwho%3DNm2" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'N6. the stop races a navigation: the main frame navigates at 3.9 s and the revoke + stop fires at 4 s' "$base/livecam?who=Nr&navat=3900&navto=http%3A%2F%2Flocalhost%3A$Port%2Flivecam%3Fwho%3DNr2" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'N7. the same race with the stop sent only once (--stop-once), a navigation caught mid-flight' "$base/livecam?who=Nr&navat=3300&navto=http%3A%2F%2Flocalhost%3A$Port%2Flivecam%3Fwho%3DNr2" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny', '--stop-once')
+Scenario 'N8. the same race with the stop repeated (default)' "$base/livecam?who=Nr&navat=3300&navto=http%3A%2F%2Flocalhost%3A$Port%2Flivecam%3Fwho%3DNr2" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+if ($Sweep -and $Sweep -notlike 'grant-*') {
+  # sweep the navigation time across the moment the stop fires (4 s after C is created); -Sweep once = stop sent once, repeat = default
+  foreach ($navat in 3300, 3500, 3700, 3900, 4100) {
+    $fl = @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny'); if ($Sweep -eq 'once') { $fl += '--stop-once' }
+    Scenario "S$navat. navigate at $navat ms, stop mode $Sweep" "$base/livecam?who=Nr&navat=$navat&navto=http%3A%2F%2Flocalhost%3A$Port%2Flivecam%3Fwho%3DNr2" $fl
+  }
+}
+if ($Sweep -like 'grant-*') {
+  # deterministic race: the page navigates (not timed against the revoke) and the revoke + stop fires N ms after the SECOND document's grant
+  $mode = $Sweep -replace '^grant-', ''
+  foreach ($ms in 0, 40, 120, 400) {
+    $fl = @('--revoke-after-grant-ms=' + $ms, '--revoke-stop=all', '--answer-after-revoke=deny'); if ($mode -eq 'once') { $fl += '--stop-once' }
+    Scenario "G$ms. revoke + stop $ms ms after the new document's grant, stop mode $mode" "$base/livecam?who=Nr&navat=2500&navto=http%3A%2F%2Flocalhost%3A$Port%2Flivecam%3Fwho%3DNr2" $fl
+  }
+}
 Get-Process m0_spike -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
 Remove-Item revoke.out, revoke.err, $srvlog -ErrorAction SilentlyContinue

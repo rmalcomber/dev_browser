@@ -36,7 +36,8 @@ function start(label){ return gum(c).then(function(st){
     if (!retried && use.getTracks().every(function(t){ return t.readyState === 'ended'; })) { retried = true; setTimeout(function(){ start('RETRY '); }, 1500); }
   }, 1000);
 }, function(e){ rep(label + 'denied ' + e.name); }); }
-start('');`, '<b>L</b>'),
+start('');
+if (q.get('navto')) { setTimeout(function(){ rep('navigating away to ' + q.get('navto')); location.href = q.get('navto'); }, +(q.get('navat') || 2000)); }`, '<b>L</b>'),
   '/liveframe': '<!doctype html><body style="background:#0a0;margin:0"><iframe src="/livecam?who=Cframe" allow="camera; microphone" style="width:600px;height:300px;border:0"></iframe>',
   '/liveframe-x': green("var f = document.createElement('iframe'); f.src = 'http://localhost:' + location.port + '/livecam?who=Cx'; f.allow = 'camera; microphone'; f.style.cssText = 'width:600px;height:300px;border:0'; document.body.appendChild(f);", ''),
   '/liveframe-s': green("var f = document.createElement('iframe'); f.src = 'http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Cs'; f.allow = 'camera; microphone'; f.style.cssText = 'width:600px;height:300px;border:0'; document.body.appendChild(f);", ''),
@@ -49,6 +50,7 @@ mk('http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Cl3', 2200, 500);`
   '/liveframes-odd': green(`var code = "navigator.mediaDevices.getUserMedia({video:true}).then(function(st){ fetch('/report?who=Csrc&kind=live&msg=granted'); setInterval(function(){ var t = st.getVideoTracks()[0]; fetch('/report?who=Csrc&kind=live&msg=video=' + t.readyState); }, 1000); }, function(e){ fetch('/report?who=Csrc&kind=live&msg=denied+' + e.name); });";
 var s = document.createElement('iframe'); s.allow = 'camera; microphone'; s.srcdoc = '<script>' + code + '<\\/script>'; s.style.cssText = 'width:300px;height:100px;border:0'; document.body.appendChild(s);
 var sb = document.createElement('iframe'); sb.sandbox = 'allow-scripts'; sb.allow = 'camera; microphone'; sb.src = '/livecam?who=Csb'; sb.style.cssText = 'width:300px;height:100px;border:0'; document.body.appendChild(sb);`, ''),
+  '/nav-iframe': green("var to = 'http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Nb'; var f = document.createElement('iframe'); f.src = 'http://localhost:' + location.port + '/livecam?who=Na&navat=' + (q0.get('navat') || 2500) + '&navto=' + encodeURIComponent(to); f.allow = 'camera *; microphone *'; f.style.cssText = 'width:500px;height:250px;border:0'; document.body.appendChild(f);".replace('var to', 'var q0 = new URLSearchParams(location.search); var to'), ''),
   '/popped': green('', '<b>popup</b>'),
 };
 // /permcheck?kind=geo|notify|clipboard|camera&mode=request|query&who=C : reports the permission state before, asks for it

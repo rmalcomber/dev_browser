@@ -317,6 +317,7 @@ fn media_save(ws: &str, m: &std::collections::BTreeMap<String, (u32, u32)>) {
 }
 // Revoke: forget a workspace's stored media decisions. CEF has no call to stop a stream that is already running, so --revoke-reload
 // also reloads workspace C's page (which ends its streams); without it the live stream is left alone to show that it keeps running.
+static GRANTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static REVOKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn revoke_media(ws: &str) {
     REVOKED.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -324,8 +325,27 @@ fn revoke_media(ws: &str) {
     println!("[m0] media decisions revoked for {ws} (store file deleted)");
 }
 
+// Finding: a stop sent while a frame is navigating can be lost (the old renderer is going away and the new document has no wrapper yet),
+// leaving a stream granted just before the revoke running. Stopping is idempotent, so the command is repeated a few times shortly after.
+wrap_task! {
+    struct RepeatStopTask { kind: String, left: u8 }
+    impl Task {
+        fn execute(&self) { send_stop(&self.kind, "repeat"); if self.left > 1 { schedule_repeat(&self.kind, self.left - 1); } }
+    }
+}
+fn schedule_repeat(kind: &str, left: u8) {
+    let delay = match left { 3 => 300, 2 => 600, _ => 900 };
+    let mut t = RepeatStopTask::new(kind.to_string(), left);
+    post_delayed_task(ThreadId::UI, Some(&mut t), delay);
+}
+
 // Tell workspace C's page process to stop its capture tracks of this kind ("all", "audio" or "video").
 fn stop_capture(kind: &str) {
+    send_stop(kind, "first");
+    if !flag("stop-once") { schedule_repeat(kind, 3); }
+}
+
+fn send_stop(kind: &str, round: &str) {
     let Some((_, bv)) = ST.with(|s| s.borrow().fresh.clone()) else { println!("[m0] no workspace C view to stop capture in"); return };
     let frames: Vec<Frame> = if flag("stop-main-only") {
         bv.browser().and_then(|b| b.main_frame()).into_iter().collect()
@@ -339,7 +359,7 @@ fn stop_capture(kind: &str) {
         frame.send_process_message(ProcessId::RENDERER, Some(&mut msg));
         sent += 1;
     }
-    println!("[m0] sent the stop-capture command ({kind}) to {sent} frame(s) of workspace C's page");
+    println!("[m0] sent the stop-capture command ({kind}, {round}) to {sent} frame(s) of workspace C's page");
 }
 
 wrap_task! {
@@ -555,7 +575,15 @@ wrap_permission_handler! {
                 }
                 let grant = requested & allowed;
                 if let Some(cb) = cb.as_ref() {
-                    if grant != 0 && (grant == requested || flag("grant-subset")) { cb.cont(grant); println!("[m0]   -> granted {}{}", bits_name(grant), if grant != requested { " (a subset of what was asked)" } else { "" }); }
+                    if grant != 0 && (grant == requested || flag("grant-subset")) {
+                        let n = GRANTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        let ms = arg("revoke-after-grant-ms");
+                        if n == 2 && !ms.is_empty() {
+                            let mut t = AutoRevokeTask::new();
+                            post_delayed_task(ThreadId::UI, Some(&mut t), ms.parse::<i64>().unwrap_or(0));
+                            println!("[m0] revoke scheduled {ms} ms after the second grant");
+                        }
+                        cb.cont(grant); println!("[m0]   -> granted {}{}", bits_name(grant), if grant != requested { " (a subset of what was asked)" } else { "" }); }
                     else { cb.cancel(); println!("[m0]   -> refused (granted would be {})", bits_name(grant)); }
                 }
                 return 1;
