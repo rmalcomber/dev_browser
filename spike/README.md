@@ -44,3 +44,5 @@ the request is aborted, the frames are clean and no processes leak. Needs node a
 `busy.ps1` destroys workspace C's view while its page is busy (spinning script, event stream, WebSocket, download, alert dialog, popup) and
 reports survival, processes and what the server saw (`-Routes`, `-AppFlags`, `-AutoDestroyMs`). Needs node on PATH.
 `busy.ps1 -Routes geo,notify,clipboard,camera` (with `-AppFlags '--own-permissions'` and optionally `--drop-permission`) destroys the view with a permission prompt open.
+`permanswer.ps1` has the app accept or deny each permission and checks the decision survives destroy/recreate and restart, and does not leak to
+the other panes' profiles. Needs node on PATH. The camera accept runs open a real webcam for a few seconds each; use `-Kinds geo,notify,clipboard` to avoid that.

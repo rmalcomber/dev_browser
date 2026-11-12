@@ -235,6 +235,38 @@ default run only proves it does not crash), real accept and deny paths (`Permiss
 decision), per-origin persistence, permission prompts in the second pane while a different workspace is on screen, and prompts
 from iframes.
 
+### Accepting and denying permissions (checked 2026-11-12)
+
+`spike/permanswer.ps1` has the app answer each prompt itself (`--answer-permissions=accept|deny`) and records what the page sees. For
+each of geolocation, notifications, clipboard read, and camera, and for each answer, it does: **visit 1** (C asks), **visit 2** (C's view
+destroyed and recreated, asks again), a graceful close and restart, **visit 3** (asks again; a new prompt would be held and logged).
+Panes A and B load the same origin in their own profiles and only query the state. The page reports to the test server.
+
+| Permission | Accept: page sees | Deny: page sees | Asked again on visit 2 / 3? | Survives restart? | Leaks to A and B? |
+| --- | --- | --- | --- | --- | --- |
+| geolocation | state `granted`; request ends in error code 2 (no location data on this PC, permission itself was granted) | `denied`, error code 1 | no / no | yes (granted and denied) | no (`prompt`) |
+| notifications | `granted` | `denied` | no / no | yes | no |
+| clipboard read | `granted`, `readText()` works | `denied`, `NotAllowedError` | no / no | yes | no |
+| camera | `getUserMedia` returns a stream (a webcam is attached) | `NotAllowedError` | **yes / yes** | **no** | no (`prompt`) |
+
+What this shows:
+
+- **The prompt reaches the app exactly once** for the three ordinary permissions, with the answer applied: accept gives a working API,
+  deny gives the standard rejection. CEF then remembers the decision in that workspace's profile: no second prompt after a destroy
+  and recreate, and none after a restart, for both grants and denials.
+- **Permissions are per workspace.** The same origin in panes A and B (other profiles) stayed at `prompt` in every run, so a grant in
+  one workspace does not reach another. This is the isolation the spec asks for, and it comes free with a profile per workspace.
+- **Camera and microphone are different: CEF does not remember them.** They come through the media callback; the permissions API
+  stays at `prompt` after an accept, and the app was asked again on every visit and after every restart. So the app must store media
+  decisions itself, per workspace and origin, and answer from that store; and show the prompt UI each time otherwise.
+- **Disclosure:** the accept runs for camera really opened this PC's webcam for a few seconds per visit (the stream was acquired and
+  never displayed or recorded). Rerun it only where that is acceptable.
+- Panes A and B reached the same results with `--own-permissions` after restart, i.e. nothing was silently granted by the restart.
+
+Not checked: the revoke path (changing a stored decision), per-origin lists in a settings page, `ACCEPT` for permissions beyond
+these four (MIDI, sensors, payment, storage access), prompts from iframes (permissions policy), a permission asked while another
+workspace is on screen, microphone alone, and what the UI should say for a permission the OS itself blocks.
+
 ### Workspace outline and saved divider position (checked 2026-11-12)
 
 - **Outline.** Each pane sits in a wrapper panel whose background is the workspace accent colour (A amber, B violet), showing as

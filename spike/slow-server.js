@@ -21,9 +21,26 @@ const pages = {
   '/camera': green('setTimeout(function(){ navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(function(){}); }, 300)', '<b>M</b>'),
   '/popped': green('', '<b>popup</b>'),
 };
+// /permcheck?kind=geo|notify|clipboard|camera&mode=request|query&who=C : reports the permission state before, asks for it
+// (unless mode=query), and reports the outcome and the state after to /report, which the server logs as "report ...".
+const permPage = green(`
+var q = new URLSearchParams(location.search), kind = q.get('kind'), mode = q.get('mode') || 'request', who = q.get('who') || 'C';
+function rep(m) { fetch('/report?who=' + who + '&kind=' + kind + '&msg=' + encodeURIComponent(m)).catch(function(){}); }
+var names = { geo: 'geolocation', notify: 'notifications', clipboard: 'clipboard-read', camera: 'camera' };
+function state() { return navigator.permissions.query({ name: names[kind] }).then(function(s){ return s.state; }, function(e){ return 'query-failed:' + e.name; }); }
+function ask() {
+  if (kind === 'geo') return new Promise(function(r){ navigator.geolocation.getCurrentPosition(function(){ r('position'); }, function(e){ r('error code ' + e.code); }); });
+  if (kind === 'notify') return Notification.requestPermission();
+  if (kind === 'clipboard') return navigator.clipboard.readText().then(function(){ return 'read ok'; }, function(e){ return e.name; });
+  return navigator.mediaDevices.getUserMedia({ video: true }).then(function(){ return 'stream'; }, function(e){ return e.name; });
+}
+state().then(function(b){ rep('state-before=' + b); if (mode === 'query') return; return ask().then(function(r){ rep('outcome=' + r); return state().then(function(a){ rep('state-after=' + a); }); }); });
+`, '<b>?</b>');
 const server = http.createServer((req, res) => {
   const id = Math.random().toString(36).slice(2, 6);
   const url = req.url.split('?')[0];
+  if (url === '/permcheck') { res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }); return res.end(permPage); }
+  if (url === '/report') { const q = new URL(req.url, 'http://x').searchParams; out(`report ${q.get('who')} ${q.get('kind')} ${q.get('msg')}`); res.writeHead(204); return res.end(); }
   out(`request ${id} ${url}`);
   res.on('close', () => out(`closed ${id} ${url}${res.writableFinished ? ' (finished)' : ' (client went away or reset)'}`));
   if (pages[url]) { res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }); return res.end(pages[url]); }

@@ -443,12 +443,27 @@ wrap_permission_handler! {
     struct SpikePerms {}
     impl PermissionHandler {
         fn on_show_permission_prompt(&self, _b: Option<&mut Browser>, id: u64, origin: Option<&CefString>, perms: u32, cb: Option<&mut PermissionPromptCallback>) -> i32 {
-            println!("[m0] permission prompt #{id} from {} (permission bits 0x{perms:x}) held by the app", origin.map(|o| o.to_string()).unwrap_or_default());
+            let answer = arg("answer-permissions");
+            let o = origin.map(|o| o.to_string()).unwrap_or_default();
+            if let (Some(cb), true) = (cb.as_ref(), !answer.is_empty()) {
+                let r = if answer == "accept" { PermissionRequestResult::ACCEPT } else { PermissionRequestResult::DENY };
+                println!("[m0] permission prompt #{id} from {o} (bits 0x{perms:x}) answered by the app: {answer}");
+                cb.cont(r);
+                return 1;
+            }
+            println!("[m0] permission prompt #{id} from {o} (permission bits 0x{perms:x}) held by the app");
             if let Some(cb) = cb { PENDING_PERMS.with(|p| p.borrow_mut().push(cb.clone())); }
             1
         }
         fn on_request_media_access_permission(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, origin: Option<&CefString>, perms: u32, cb: Option<&mut MediaAccessCallback>) -> i32 {
-            println!("[m0] media permission request from {} (bits 0x{perms:x}) held by the app", origin.map(|o| o.to_string()).unwrap_or_default());
+            let answer = arg("answer-permissions");
+            let o = origin.map(|o| o.to_string()).unwrap_or_default();
+            if let (Some(cb), true) = (cb.as_ref(), !answer.is_empty()) {
+                println!("[m0] media permission request from {o} (bits 0x{perms:x}) answered by the app: {answer}");
+                if answer == "accept" { cb.cont(perms); } else { cb.cancel(); }
+                return 1;
+            }
+            println!("[m0] media permission request from {o} (bits 0x{perms:x}) held by the app");
             if let Some(cb) = cb { PENDING_MEDIA.with(|p| p.borrow_mut().push(cb.clone())); }
             1
         }
@@ -520,7 +535,7 @@ wrap_client! {
         fn display_handler(&self) -> Option<DisplayHandler> { Some(SpikeDisplay::new(self.role)) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(SpikeLoad::new(self.role)) }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(SpikeLife::new()) }
-        fn permission_handler(&self) -> Option<PermissionHandler> { if flag("own-permissions") { Some(SpikePerms::new()) } else { None } }
+        fn permission_handler(&self) -> Option<PermissionHandler> { if flag("own-permissions") || !arg("answer-permissions").is_empty() { Some(SpikePerms::new()) } else { None } }
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { if flag("native-dialogs") { None } else { Some(SpikeDialogs::new(self.role)) } }
     }
 }
