@@ -173,6 +173,38 @@ logs what the server saw.
 Not checked: a destroy while a page is running script or holding a connection open (websocket, download, media), a destroy of
 a view that has an open popup or permission prompt, and memory with real sites (the pages here are tiny).
 
+### Destroying a view on a busy page (checked 2026-11-12)
+
+`spike/busy.ps1` runs six scenarios against `slow-server.js`: workspace C loads the page, the page goes busy, C's view is destroyed
+(`Ctrl+6`), then C is recreated from its kept context. It counts processes, reads the server's log of what the connection did, and
+checks the app survived.
+
+| Page | What it was doing | Survived | Processes before / busy / after | Server saw |
+| --- | --- | --- | --- | --- |
+| `/busy` | `while (true) {}` in the page script | yes | 9 / 10 / 9 | requests finished (page itself is static) |
+| `/sse` | endless event stream | yes | 9 / 10 / 9 | event stream closed by the client |
+| `/ws` | open WebSocket | yes | 9 / 10 / 9 | `ws closed (client went away)` |
+| `/download` | endless download started by script | yes | 9 / 10 / 9 | file request closed by the client |
+| `/alert` | `alert()` open and an `onbeforeunload` handler | **crashed with CEF's own dialogs; yes once the app answers dialogs** | 9 / 10 / 9 | request finished |
+| `/popup` | `window.open` on load | yes | 9 / 10 / 9 | only the opener was requested (popup not opened) |
+
+A spinning script does not stop the destroy (the renderer process is killed and the count returns to 9). Every connection
+the page held was closed from the client side, and the recreated view worked every time.
+
+**The one real bug.** Destroying a view while an `alert()` was open, with CEF's own JS dialogs, crashed the whole app: an
+access violation inside `libcef.dll` (+0x8ddbd5b, from the crash dump). Reproduced with `--native-dialogs`. The spike now answers
+JS dialogs itself (`SpikeDialogs`: cancels alert and confirm, allows leaving on `beforeunload`), and with that the same destroy
+is clean. Two stricter variants also survived: `--hold-dialog` keeps the dialog callback pending like a custom dialog would,
+then destroys the view after cancelling it, and `--hold-dialog --drop-dialog` destroys it with the callback released without an
+answer. Design consequence for the real app: **the browser owns all dialog UI** (alert, confirm, prompt, beforeunload, and later
+auth, file picker and permission prompts) and must resolve or release any pending dialog when its view is destroyed. A dialog
+that takes the keyboard also swallowed `Ctrl+6` with the native dialog, so shell shortcuts must not depend on the page's view
+having the focus.
+
+Not checked: confirm and prompt dialogs (only alert and beforeunload), a real custom dialog UI, authentication dialogs, file
+pickers, permission prompts, downloads with a download handler and UI, media or WebRTC in the page, service workers, and
+popups the app chooses to allow.
+
 ### Workspace outline and saved divider position (checked 2026-11-12)
 
 - **Outline.** Each pane sits in a wrapper panel whose background is the workspace accent colour (A amber, B violet), showing as

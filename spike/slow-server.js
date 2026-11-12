@@ -1,18 +1,52 @@
-// Test page server for the mid-load check: every request is answered after DELAY ms with a solid green page, and the server
-// logs whether the client was still there. Usage: node slow-server.js <port> [delayMs] <logfile>
-const http = require('http'), fs = require('fs');
+// Test page server for the destroy checks. Usage: node slow-server.js <port> [delayMs] <logfile>
+// /page (default)  answers after delayMs with a solid green page            /busy      green page whose script spins forever
+// /sse             page holding an endless event stream open                /ws        page holding a WebSocket open
+// /download        page that starts a download that never finishes          /alert     page that opens alert() and sets onbeforeunload
+// /popup           page that calls window.open on load
+// Every request, abort and close is logged so a run can say whether the connection really went away.
+const http = require('http'), crypto = require('crypto'), fs = require('fs');
 const [port, delay, log] = [+process.argv[2], +(process.argv[3] || 3000), process.argv[4]];
 const out = (m) => fs.appendFileSync(log, `${Date.now()} ${m}\n`);
-http.createServer((req, res) => {
+const green = (extra = '', body = '<b>C</b>') => `<!doctype html><body style="background:#0a0;color:#fff;font:200px sans-serif">${body}<script>${extra}</script>`;
+const pages = {
+  '/busy': green('setTimeout(function(){ document.title = "busy"; while (true) {} }, 400)'),
+  '/sse': green('var es = new EventSource("/events"); es.onmessage = function(){}', '<b>S</b>'),
+  '/ws': green('var ws = new WebSocket("ws://" + location.host + "/socket"); ws.onmessage = function(){}', '<b>W</b>'),
+  '/download': green('setTimeout(function(){ var a = document.createElement("a"); a.href = "/file"; a.download = "big.bin"; document.body.appendChild(a); a.click(); }, 300)', '<b>D</b>'),
+  '/alert': green('window.onbeforeunload = function(){ return "stay"; }; setTimeout(function(){ alert("hello from workspace C"); }, 300)', '<b>!</b>'),
+  '/popup': green('setTimeout(function(){ window.open("/popped", "_blank"); }, 300)', '<b>P</b>'),
+  '/popped': green('', '<b>popup</b>'),
+};
+const server = http.createServer((req, res) => {
   const id = Math.random().toString(36).slice(2, 6);
-  out(`request ${id} ${req.url}`);
-  let done = false;
-  res.on('close', () => { if (!done) out(`aborted ${id} (client went away before the response)`); });
+  const url = req.url.split('?')[0];
+  out(`request ${id} ${url}`);
+  res.on('close', () => out(`closed ${id} ${url}${res.writableFinished ? ' (finished)' : ' (client went away or reset)'}`));
+  if (pages[url]) { res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }); return res.end(pages[url]); }
+  if (url === '/events') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
+    const t = setInterval(() => res.write('data: tick\n\n'), 200); res.on('close', () => clearInterval(t)); return;
+  }
+  if (url === '/file') {
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="big.bin"', 'cache-control': 'no-store' });
+    const t = setInterval(() => res.write(Buffer.alloc(16384, 1)), 100); res.on('close', () => clearInterval(t)); return;
+  }
+  if (url === '/favicon.ico') { res.writeHead(404); return res.end(); }
   setTimeout(() => {
     if (res.destroyed) return;
-    done = true;
     res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
-    res.end('<body style="background:#0a0;color:#fff;font:200px sans-serif"><b>C</b>');
+    res.end(green());
     out(`sent ${id}`);
   }, delay);
-}).listen(port, '127.0.0.1', () => out('listening'));
+});
+server.on('upgrade', (req, socket) => {
+  const key = req.headers['sec-websocket-key'];
+  const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  out('ws open');
+  const t = setInterval(() => { try { socket.write(Buffer.from([0x81, 4, 0x74, 0x69, 0x63, 0x6b])); } catch (e) {} }, 300);
+  socket.on('data', () => {});
+  socket.on('error', () => {});
+  socket.on('close', () => { clearInterval(t); out('ws closed (client went away)'); });
+});
+server.listen(port, '127.0.0.1', () => out('listening'));

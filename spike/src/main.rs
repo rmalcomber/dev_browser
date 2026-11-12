@@ -56,6 +56,7 @@ struct St {
 }
 
 thread_local! { static ST: RefCell<St> = RefCell::new(St::default()); }
+thread_local! { static PENDING_DIALOGS: RefCell<Vec<JsdialogCallback>> = RefCell::new(Vec::new()); }
 
 fn arg(name: &str) -> String {
     let cl = command_line_get_global().expect("command line");
@@ -147,15 +148,21 @@ fn start_fresh_workspace() {
 }
 
 // Destroys workspace C's browser and view (a discarded tab), keeping its request context.
-fn destroy_fresh_view() {
+fn destroy_fresh_view(source: &str) {
     let (fresh, panel) = ST.with(|s| { let mut s = s.borrow_mut(); (s.fresh.take(), s.panel.clone()) });
     let (Some((wrap, bv)), Some(panel)) = (fresh, panel) else { println!("[m0] no workspace C view to destroy"); return };
+    // a custom dialog UI must resolve or release any dialog the destroyed view still has pending
+    let pending: Vec<JsdialogCallback> = PENDING_DIALOGS.with(|p| p.borrow_mut().drain(..).collect());
+    if !pending.is_empty() {
+        if flag("drop-dialog") { println!("[m0] {} pending dialog(s) dropped without an answer", pending.len()); drop(pending); }
+        else { for cb in pending { cb.cont(0, Some(&CefString::from(""))); } println!("[m0] pending dialog(s) cancelled before destroying"); }
+    }
     // Finding: closing a view's browser while it is still in the window closes the whole window (every browser, then the
     // app). Detach the view first, then close its browser.
     let mut wv = View::from(&wrap);
     panel.remove_child_view(Some(&mut wv));
     if let Some(h) = bv.browser().and_then(|b| b.host()) { h.close_browser(1); }
-    println!("[m0] workspace C view destroyed (context kept)");
+    println!("[m0] workspace C view destroyed (context kept) by {source}");
     // Finding: if the destroyed view was the one on screen (and focused), nothing was left to receive key events and the window
     // stayed blank. Fall back to the split view and give a pane the focus, as the real app should when a workspace is discarded.
     let (mode, wr, dv, panes, last) = ST.with(|s| { let mut s = s.borrow_mut(); let m = s.mode; if m == 3 { s.mode = 0; } s.last_layout = (0, 0, 0); (m, s.wrappers.clone(), s.divider_view.clone(), s.pane_views.clone(), s.last_pane) });
@@ -191,6 +198,9 @@ fn create_fresh_view() {
     ST.with(|s| s.borrow_mut().fresh = Some((wrap.clone(), bv.clone())));
     wrap.set_visible(1);
     println!("[m0] workspace C view created and shown");
+    // --auto-destroy-ms=N: destroy it from a timer too, for pages (alert dialogs) that swallow the key event
+    let ms: i64 = arg("auto-destroy-ms").parse().unwrap_or(0);
+    if ms > 0 { let mut t = AutoDestroyTask::new(); post_delayed_task(ThreadId::UI, Some(&mut t), ms); }
     relayout();
 }
 
@@ -342,7 +352,7 @@ wrap_keyboard_handler! {
             }
             if ctrl && e.windows_key_code == VK_3 && self.role != OVERLAY { cycle_mode(); return 1; }
             if ctrl && e.windows_key_code == VK_4 && self.role != OVERLAY { start_fresh_workspace(); return 1; }
-            if ctrl && e.windows_key_code == 0x36 && self.role != OVERLAY { destroy_fresh_view(); return 1; }
+            if ctrl && e.windows_key_code == 0x36 && self.role != OVERLAY { destroy_fresh_view("key"); return 1; }
             if ctrl && (e.windows_key_code == VK_1 || e.windows_key_code == VK_2) && self.role != OVERLAY {
                 focus_pane(if e.windows_key_code == VK_1 { 0 } else { 1 });
                 return 1;
@@ -378,6 +388,37 @@ wrap_display_handler! {
             if self.role == OVERLAY { on_overlay_title(&t); }
             else if self.role == DIVIDER { on_divider_title(&t); }
             else if t.starts_with("[m0-ls]") { println!("{t}"); }
+        }
+    }
+}
+
+// Finding: with CEF's own (Views) JS dialogs, destroying a view while an alert() was open crashed the app (access violation inside
+// libcef). The app should own dialog UI. By default the spike answers dialogs itself (cancels alert/confirm, allows leaving);
+// --native-dialogs leaves them to CEF (reproduces the crash); --hold-dialog keeps the callback pending like a custom dialog would.
+wrap_jsdialog_handler! {
+    struct SpikeDialogs { role: u8 }
+    impl JsdialogHandler {
+        fn on_jsdialog(&self, _b: Option<&mut Browser>, origin: Option<&CefString>, _t: JsdialogType, msg: Option<&CefString>, _d: Option<&CefString>, cb: Option<&mut JsdialogCallback>, _suppress: Option<&mut i32>) -> i32 {
+            let origin = origin.map(|o| o.to_string()).unwrap_or_default();
+            let msg = msg.map(|m| m.to_string()).unwrap_or_default();
+            if flag("hold-dialog") {
+                if let Some(cb) = cb { PENDING_DIALOGS.with(|p| p.borrow_mut().push(cb.clone())); }
+                println!("[m0] js dialog from {origin} held open: {msg:?}");
+            } else {
+                if let Some(cb) = cb { cb.cont(0, Some(&CefString::from(""))); }
+                println!("[m0] js dialog from {origin} answered by the app (cancelled): {msg:?}");
+            }
+            1
+        }
+        fn on_before_unload_dialog(&self, _b: Option<&mut Browser>, _m: Option<&CefString>, _reload: i32, cb: Option<&mut JsdialogCallback>) -> i32 {
+            if flag("hold-dialog") {
+                if let Some(cb) = cb { PENDING_DIALOGS.with(|p| p.borrow_mut().push(cb.clone())); }
+                println!("[m0] beforeunload dialog held open");
+            } else {
+                if let Some(cb) = cb { cb.cont(1, Some(&CefString::from(""))); }
+                println!("[m0] beforeunload dialog answered by the app (leave allowed)");
+            }
+            1
         }
     }
 }
@@ -444,6 +485,7 @@ wrap_client! {
         fn display_handler(&self) -> Option<DisplayHandler> { Some(SpikeDisplay::new(self.role)) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(SpikeLoad::new(self.role)) }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(SpikeLife::new()) }
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> { if flag("native-dialogs") { None } else { Some(SpikeDialogs::new(self.role)) } }
     }
 }
 
@@ -607,6 +649,11 @@ wrap_task! {
             if let Some(o) = ov { let b = o.bounds(); println!("[m0] dump overlay view bounds=({},{} {}x{}) visible={} has_browser={}", b.x, b.y, b.width, b.height, o.is_visible(), o.browser().is_some()); }
         }
     }
+}
+
+wrap_task! {
+    struct AutoDestroyTask {}
+    impl Task { fn execute(&self) { destroy_fresh_view("timer"); } }
 }
 
 wrap_task! {

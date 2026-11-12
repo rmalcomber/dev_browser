@@ -41,3 +41,5 @@ flash a new view shows with the default browser background).
 view while it is on screen.
 `midload.ps1` destroys workspace C's view while its page is still loading (`slow-server.js` answers after 3 s) and checks the app survives,
 the request is aborted, the frames are clean and no processes leak. Needs node and ffmpeg on PATH.
+`busy.ps1` destroys workspace C's view while its page is busy (spinning script, event stream, WebSocket, download, alert dialog, popup) and
+reports survival, processes and what the server saw (`-Routes`, `-AppFlags`, `-AutoDestroyMs`). Needs node on PATH.
