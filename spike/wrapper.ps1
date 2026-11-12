@@ -54,6 +54,10 @@ Scenario 'W6. the same dodging page against the PROTOTYPE wrapper (the default n
 Scenario 'W7. a page that CLONES the stream and uses only the clone; wrapper variant proto (no clone tracking)' "$base/livecam?who=C&clone=1" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny', '--wrap=proto')
 Scenario 'W8. the same cloning page against the full wrapper (the default)' "$base/livecam?who=C&clone=1" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
 Scenario 'W9. a hostile page replaces MediaStreamTrack.prototype.stop with a no-op; the full wrapper (the default)' "$base/livecam?who=C&tamper=1" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'X1. stream in a cross-ORIGIN iframe (same site, other port); stop sent to the main frame only (the previous behaviour)' "$base/liveframe-s" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny', '--stop-main-only')
+Scenario 'X2. the same page; stop sent to EVERY frame (frame handler list)' "$base/liveframe-s" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
+Scenario 'X3. stream in a cross-SITE iframe (localhost, probably its own renderer process); stop sent to the main frame only' "$base/liveframe-x" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny', '--stop-main-only')
+Scenario 'X4. the same cross-site page; stop sent to EVERY frame' "$base/liveframe-x" @('--auto-revoke-ms=4000', '--revoke-stop=all', '--answer-after-revoke=deny')
 Get-Process m0_spike -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
 Remove-Item revoke.out, revoke.err, $srvlog -ErrorAction SilentlyContinue

@@ -348,10 +348,32 @@ it as a courtesy for cooperative sites and keep a browser-side guarantee behind 
 and if the page does not report its tracks ended (the wrapper can reply with the count, or the browser can check after a moment),
 reload, navigate away or discard the view. Never rely on it alone to honour a revoke.
 
-Not checked: cross-origin iframes (the forward is a script call and cannot cross origins; each frame would need its own process
-message, and this cef-rs build can only append to a string list, so listing frame ids needs another route), the legacy and
+Not checked here (cross-origin iframes are in the next section): the legacy and
 screen-capture APIs, WebRTC peers that hold a clone, workers, popups, whether the wrapper changes page behaviour on real sites, and
 its cost per frame.
+
+### The stop command across frames, including cross-origin iframes (checked 2026-11-12)
+
+The wrapper section left cross-origin iframes open: a script call cannot cross origins, and the stop command had only gone to the main
+frame. The browser side now keeps a list of every frame of workspace C's page from the `FrameHandler` callbacks (`on_frame_created`,
+`on_frame_destroyed`; this avoids `browser.frame_identifiers`, whose string list this cef-rs build cannot read) and sends the stop message
+to each frame, so each frame's own renderer runs it. `wrapper.ps1` scenarios X1 to X4, fake devices:
+
+| Scenario | Stop sent to | Result |
+| --- | --- | --- |
+| X1 iframe on another origin of the same site (other port) | main frame only | **not stopped**, frames kept climbing |
+| X2 same page | every frame | stopped (`ended`, count frozen), retry refused |
+| X3 iframe on another site (`localhost`, probably its own renderer process) | main frame only | **not stopped** |
+| X4 same page | every frame | stopped, retry refused |
+
+So "stop everywhere" needs the per-frame list, and it works across origins and sites because the wrapper is installed in every
+frame's context in whichever renderer process hosts it. Two more things the runs showed: the camera request from the cross-site iframe
+arrived with the **iframe's own origin** (`http://localhost:...`), so a store keyed only by the requesting origin treats an embedded
+widget and the page that embeds it as separate grants, and the real app should decide whether to key on (top-level origin,
+requesting origin); and the same-origin iframe case from before is covered by the same list, so the script forwarding is no longer needed.
+
+Not checked: nested cross-origin frames, frames added or removed while a stream is live, `srcdoc` and `about:blank` frames, sandboxed
+iframes without `allow-same-origin`, and any page that tampers with the wrapper (the W9 limit still applies in every frame).
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 

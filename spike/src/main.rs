@@ -57,6 +57,9 @@ struct St {
 
 thread_local! { static ST: RefCell<St> = RefCell::new(St::default()); }
 thread_local! { static PENDING_DIALOGS: RefCell<Vec<JsdialogCallback>> = RefCell::new(Vec::new()); }
+// Every frame of workspace C's page (main frame and iframes, including cross-origin ones that live in other renderer processes), kept from
+// the browser-side frame callbacks, because a stop command has to be addressed to each frame's own renderer.
+thread_local! { static FRAMES_C: RefCell<Vec<Frame>> = RefCell::new(Vec::new()); }
 thread_local! { static PENDING_PERMS: RefCell<Vec<PermissionPromptCallback>> = RefCell::new(Vec::new()); }
 thread_local! { static PENDING_MEDIA: RefCell<Vec<MediaAccessCallback>> = RefCell::new(Vec::new()); }
 
@@ -324,11 +327,19 @@ fn revoke_media(ws: &str) {
 // Tell workspace C's page process to stop its capture tracks of this kind ("all", "audio" or "video").
 fn stop_capture(kind: &str) {
     let Some((_, bv)) = ST.with(|s| s.borrow().fresh.clone()) else { println!("[m0] no workspace C view to stop capture in"); return };
-    let Some(frame) = bv.browser().and_then(|b| b.main_frame()) else { return };
-    let Some(mut msg) = process_message_create(Some(&CefString::from("m0-stop-capture"))) else { return };
-    if let Some(args) = msg.argument_list() { args.set_string(0, Some(&CefString::from(kind))); }
-    frame.send_process_message(ProcessId::RENDERER, Some(&mut msg));
-    println!("[m0] sent the stop-capture command ({kind}) to workspace C's page process");
+    let frames: Vec<Frame> = if flag("stop-main-only") {
+        bv.browser().and_then(|b| b.main_frame()).into_iter().collect()
+    } else {
+        FRAMES_C.with(|v| v.borrow().iter().filter(|f| f.is_valid() == 1).cloned().collect())
+    };
+    let mut sent = 0;
+    for frame in frames {
+        let Some(mut msg) = process_message_create(Some(&CefString::from("m0-stop-capture"))) else { continue };
+        if let Some(args) = msg.argument_list() { args.set_string(0, Some(&CefString::from(kind))); }
+        frame.send_process_message(ProcessId::RENDERER, Some(&mut msg));
+        sent += 1;
+    }
+    println!("[m0] sent the stop-capture command ({kind}) to {sent} frame(s) of workspace C's page");
 }
 
 wrap_task! {
@@ -564,6 +575,21 @@ wrap_permission_handler! {
     }
 }
 
+wrap_frame_handler! {
+    struct SpikeFrames {}
+    impl FrameHandler {
+        fn on_frame_created(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>) {
+            if let Some(f) = frame { FRAMES_C.with(|v| v.borrow_mut().push(f.clone())); }
+        }
+        fn on_frame_destroyed(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>) {
+            if let Some(f) = frame {
+                let id = CefString::from(&f.identifier()).to_string();
+                FRAMES_C.with(|v| v.borrow_mut().retain(|x| CefString::from(&x.identifier()).to_string() != id));
+            }
+        }
+    }
+}
+
 wrap_load_handler! {
     struct SpikeLoad { role: u8 }
     impl LoadHandler {
@@ -626,6 +652,7 @@ wrap_client! {
         fn display_handler(&self) -> Option<DisplayHandler> { Some(SpikeDisplay::new(self.role)) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(SpikeLoad::new(self.role)) }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(SpikeLife::new()) }
+        fn frame_handler(&self) -> Option<FrameHandler> { if self.role == 2 { Some(SpikeFrames::new()) } else { None } }
         fn permission_handler(&self) -> Option<PermissionHandler> { if flag("own-permissions") || flag("media-store") || !arg("answer-permissions").is_empty() { Some(SpikePerms::new(self.role)) } else { None } }
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { if flag("native-dialogs") { None } else { Some(SpikeDialogs::new(self.role)) } }
     }

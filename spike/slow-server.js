@@ -38,6 +38,8 @@ function start(label){ return gum(c).then(function(st){
 }, function(e){ rep(label + 'denied ' + e.name); }); }
 start('');`, '<b>L</b>'),
   '/liveframe': '<!doctype html><body style="background:#0a0;margin:0"><iframe src="/livecam?who=Cframe" allow="camera; microphone" style="width:600px;height:300px;border:0"></iframe>',
+  '/liveframe-x': green("var f = document.createElement('iframe'); f.src = 'http://localhost:' + location.port + '/livecam?who=Cx'; f.allow = 'camera; microphone'; f.style.cssText = 'width:600px;height:300px;border:0'; document.body.appendChild(f);", ''),
+  '/liveframe-s': green("var f = document.createElement('iframe'); f.src = 'http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Cs'; f.allow = 'camera; microphone'; f.style.cssText = 'width:600px;height:300px;border:0'; document.body.appendChild(f);", ''),
   '/popped': green('', '<b>popup</b>'),
 };
 // /permcheck?kind=geo|notify|clipboard|camera&mode=request|query&who=C : reports the permission state before, asks for it
@@ -91,3 +93,8 @@ server.on('upgrade', (req, socket) => {
   socket.on('close', () => { clearInterval(t); out('ws closed (client went away)'); });
 });
 server.listen(port, '127.0.0.1', () => out('listening'));
+// More origins for the cross-origin iframe checks: port+1 is another origin of the same site; localhost is another site.
+const handler = server.listeners('request')[0], upgrader = server.listeners('upgrade')[0];
+for (const [p, h] of [[port + 1, '127.0.0.1'], [port, '::1'], [port + 1, '::1']]) {
+  const extra = http.createServer(handler); extra.on('upgrade', upgrader); extra.on('error', () => {}); extra.listen(p, h);
+}

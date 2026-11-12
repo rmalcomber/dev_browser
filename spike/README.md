@@ -51,3 +51,4 @@ It uses Chromium's fake capture devices, so no real camera or microphone is open
 `revoke.ps1` checks granting a subset of the requested media kinds and revoking while a stream is live (fake devices; no real camera or microphone).
 `wrapper.ps1` checks the render-process getUserMedia wrapper that stops a running stream from the browser (`-Only W5` etc. runs one scenario).
 Fake capture devices; no real camera or microphone is opened.
+`wrapper.ps1 -Only "X[1234]"` runs the cross-origin and cross-site iframe stop checks (the test server also listens on port+1 and on ::1 so `localhost` is a second site).
