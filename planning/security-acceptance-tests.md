@@ -12,7 +12,7 @@ any release. None can be written until the code exists; the point now is that th
 | S5 | Tool code cannot read browser databases or Chromium session files through the exposed runtime. | M3 | Automated | Planned |
 | S6 | A visited webpage cannot invoke privileged browser IPC or reach launcher internals. | M1 | Automated + manual | Planned |
 | S7 | `page.selection.read` binds to the focused pane and never collects from both panes. | M3/M4 | Automated | Planned |
-| S8 | Switching workspace or pane never flashes previously visible content. | M1/M4 | Manual, screen capture | Planned |
+| S8 | Switching workspace or pane never flashes previously visible content. | M1/M4 | Manual, screen capture | Spike: passes for pre-existing views at 60 fps; fresh views and real tabs still to test |
 | S9 | Token inputs (JWTs etc.) are not logged or persisted by default. | M3 | Automated (log and DB scan) | Planned |
 | S10 | Opening a tab across workspaces uses the destination context, never the source credentials. | M1 | Automated | Planned |
 | S11 | Collapsed workspace headers expose only name and icon: no counts, titles, URLs, thumbnails or activity. | M1 | Automated (UI test) | Planned |

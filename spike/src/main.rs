@@ -26,6 +26,7 @@ const VK_P: i32 = 0x50;
 const VK_1: i32 = 0x31;
 const VK_2: i32 = 0x32;
 const VK_ESCAPE: i32 = 0x1B;
+const VK_3: i32 = 0x33;
 const CTRL: u32 = 1 << 2; // EVENTFLAG_CONTROL_DOWN
 
 #[derive(Default)]
@@ -46,6 +47,7 @@ struct St {
     last_layout: (i32, i32, i32),
     pane_w: [i32; 2],
     wrappers: Vec<Panel>,
+    mode: u8, // 0 split, 1 workspace A only, 2 workspace B only (the spike's stand-in for switching workspace)
     ctxs: Vec<RequestContext>,
     ctx_ready: usize,
 }
@@ -83,6 +85,19 @@ fn set_overlay_visible(show: bool) {
         v.request_focus();
     }
     println!("[m0] overlay {} (focus -> {})", if show { "shown" } else { "hidden" }, if show { "overlay".to_string() } else { format!("pane {}", last) });
+}
+
+// Spike stand-in for switching workspace: split -> only workspace A -> only workspace B -> split.
+fn cycle_mode() {
+    let (mode, wr, dv, panes) = ST.with(|s| { let mut s = s.borrow_mut(); s.mode = (s.mode + 1) % 3; (s.mode, s.wrappers.clone(), s.divider_view.clone(), s.pane_views.clone()) });
+    if wr.len() != 2 { return }
+    wr[0].set_visible((mode != 2) as i32);
+    wr[1].set_visible((mode != 1) as i32);
+    if let Some(d) = dv.as_ref() { d.set_visible((mode == 0) as i32); }
+    println!("[m0] mode: {}", match mode { 0 => "split", 1 => "workspace A only", _ => "workspace B only" });
+    relayout();
+    let focus = match mode { 1 => 0, 2 => 1, _ => ST.with(|s| s.borrow().last_pane) };
+    if let Some(p) = panes.get(focus) { p.request_focus(); }
 }
 
 fn toggle_overlay() {
@@ -163,10 +178,11 @@ fn relayout() {
     let (Some(divider), Some(panel), true) = (divider, panel, panes.len() == 2 && wrappers.len() == 2) else { return };
     let size = panel.size();
     if size.width <= 0 || size.height <= 0 { return }
+    let mode = ST.with(|s| s.borrow().mode);
     let avail = size.width - DIV_W;
     let wa = ((avail as f32 * ratio) as i32).clamp(MIN_PANE, (avail - MIN_PANE).max(MIN_PANE));
     // Only re-install when something changed, otherwise the layout change this causes would call us again.
-    let key = (size.width, size.height, wa);
+    let key = (size.width, size.height, wa + 100000 * mode as i32);
     if ST.with(|s| { let mut s = s.borrow_mut(); let same = s.last_layout == key; s.last_layout = key; same }) { return }
     // A box layout on the panel keeps the native browser windows in step with the views; re-installing it with new
     // weights is what re-flows it (changing flex on an installed layout did not).
@@ -174,8 +190,10 @@ fn relayout() {
     let (mut va, mut vd, mut vb) = (View::from(&wrappers[0]), View::from(&divider), View::from(&wrappers[1]));
     let (pa, pb) = (View::from(&panes[0]), View::from(&panes[1]));
     for v in [&mut va, &mut vd, &mut vb] { layout.set_flex_for_view(Some(v), 0); }
-    ST.with(|s| s.borrow_mut().pane_w = [wa, avail - wa]);
-    println!("[m0] relayout: panel {}x{} -> A={wa}px divider={DIV_W}px B={}px (ratio {:.3})", size.width, size.height, avail - wa, wa as f32 / avail as f32);
+    // In single-workspace mode the visible pane takes the whole width (hidden views are skipped by the layout).
+    let widths = match mode { 1 => [size.width, 0], 2 => [0, size.width], _ => [wa, avail - wa] };
+    ST.with(|s| s.borrow_mut().pane_w = widths);
+    println!("[m0] relayout: mode {mode} panel {}x{} -> A={}px B={}px (ratio {:.3})", size.width, size.height, widths[0], widths[1], wa as f32 / avail as f32);
     pa.invalidate_layout();
     pb.invalidate_layout();
     va.invalidate_layout();
@@ -217,6 +235,7 @@ wrap_keyboard_handler! {
                 toggle_overlay();
                 return 1;
             }
+            if ctrl && e.windows_key_code == VK_3 && self.role != OVERLAY { cycle_mode(); return 1; }
             if ctrl && (e.windows_key_code == VK_1 || e.windows_key_code == VK_2) && self.role != OVERLAY {
                 focus_pane(if e.windows_key_code == VK_1 { 0 } else { 1 });
                 return 1;

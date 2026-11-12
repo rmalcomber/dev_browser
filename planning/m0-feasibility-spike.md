@@ -29,7 +29,7 @@ lines of glue were needed, and what broke.
 | 2 | Overlay | **Pass for behaviour, not yet seen by eye.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created, shown and hidden over the live pages. A real mouse drag (`SendInput`) moved it by the expected steps (+10,+5 each, 12 steps) and the position is clamped to the window. Not checked: IME, real OS-level DPI (see below). |
 | 3 | `Ctrl+P` | **Pass in the cases run** (real key input via `SendInput`, read from the log): intercepted with focus in a page text input, in the iframe test area, and in the other pane; the page never saw it (`on_pre_key_event` returned handled). `Escape` closes the overlay and focus returns to the pane that had it (A or B). Not checked: that no print dialog flashes (the key is consumed before the page, so it should not), pages with their own `Ctrl+P` handler, a focused PDF viewer, non-US keyboard layouts. |
 | 4 | Two sessions | Two request contexts with distinct `cache_path` under one `root_cache_path`. Sign in to GitHub as two identities; both survive an app restart; cookies are not shared. | Both account names visible after restart |
-| 5 | Two panes | **Pass, seen by eye (screenshots) and by log.** In Alloy style both panes, a draggable divider and the overlay work in one window. A real mouse drag of the divider resizes the panes smoothly (+150, -300, then -400 stopping at the 120px minimum). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane. In Chrome style only the first browser view gets a browser. 20 screenshots over a few seconds settle to one steady frame. Window resize with the divider moved works, each pane has a workspace-coloured outline that follows focus, and the divider position is saved and restored (see below). Not done: flash-free *workspace* swaps. |
+| 5 | Two panes | **Pass, seen by eye (screenshots) and by log.** In Alloy style both panes, a draggable divider and the overlay work in one window. A real mouse drag of the divider resizes the panes smoothly (+150, -300, then -400 stopping at the 120px minimum). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane. In Chrome style only the first browser view gets a browser. 20 screenshots over a few seconds settle to one steady frame. Window resize with the divider moved works, each pane has a workspace-coloured outline that follows focus, and the divider position is saved and restored (see below). Workspace swaps show no flash in the cases tried (see below). |
 
 Use throwaway test accounts or a non-sensitive login where possible; never record credentials in this repo.
 
@@ -77,6 +77,30 @@ native window from the tooling used, so anything visual or typed is marked **not
 2. **Asynchronous profile creation.** With a valid path CEF creates the profile asynchronously, and `browser_view_create`
    returns `None` until `RequestContextHandler::on_request_context_initialized` has fired. Create the browser views from
    that callback (the spike builds its UI once every context is ready).
+
+### Workspace swap flash (checked 2026-11-12)
+
+The spike's stand-in for switching workspace is `Ctrl+3`: split, then only workspace A, then only workspace B, then split
+(the other views are hidden and the layout re-flows). Pane A is a solid red page and pane B a solid blue one, so a frame of the
+wrong colour layout is easy to spot. `spike/flash.ps1` records the client area at 60 fps with ffmpeg (gdigrab) while sending
+the key, and `flash-analyze.js` classifies each frame's left and right halves.
+
+| Run | Swaps | Frames | Unexpected frames |
+| --- | --- | --- | --- |
+| 3 runs, 1.8 s apart | 3 each | 479 to 540 each | 0 |
+| rapid, 250 ms apart | 9 | 360 | 0 (states of about 16 frames) |
+| very rapid, 90 ms apart | 12 | 300 | 0 (states of about 5 frames) |
+
+Every frame was exactly split (red|blue), only A (red|red) or only B (blue|blue): no blank, black, white or mixed frame, and
+no frame still showing the old workspace's colour after the switch. The analyser was sanity-checked on a synthetic capture and
+flags a mixed frame (over 15% of a half wrong) and a black one.
+
+**Limits.** (1) Both workspace views already existed and had painted before the first switch; the risky case is switching
+to a view that is created or first shown at that moment (a stale GPU surface could show the old workspace's pixels), which
+needs the real tab model. (2) A sliver under 15% of a half, or a flash shorter than the capture can see, would not be
+flagged. (3) Screen capture shows what the compositor presented, which is what a user sees, but at 60 fps. (4) Pages were
+solid colours, not real sites; tool panels and the widget panel are not in the spike. (5) No OS-level focus or
+taskbar-preview leak check: the spec's "collapsed workspace shows no tab data" is a sidebar rule the spike does not have.
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 
