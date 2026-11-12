@@ -80,9 +80,13 @@ native window from the tooling used, so anything visual or typed is marked **not
 
 ### Findings worth keeping
 
-- **Chrome vs Alloy runtime style.** Chrome style (the CEF default) gave a browser only for the first `BrowserView` in a
-  window, so two panes in one window did not work. Alloy style does both panes and the overlay. Alloy is CEF's older style;
-  how long it stays supported needs checking before we depend on it (see open questions).
+- **Chrome vs Alloy style (support horizon checked 2026-11-12).** Chrome style gave a browser only for the first
+  `BrowserView` in a window; Alloy style did two panes and the overlay. CEF removed the Alloy *bootstrap* in M128 (Chrome
+  bootstrap is the only one now), but kept Alloy *style* on purpose: [cef issue 3681](https://github.com/chromiumembedded/cef/issues/3681)
+  adds lightweight Alloy-style windows and browsers, explicitly "multiple browsers in a single Chrome window ... with different
+  CefRequestContext", and was closed on 2025-12-06 with a test for several Alloy-style BrowserViews in one Window. So the
+  spike's setup (Chrome bootstrap, Alloy-style views) is the supported route for this use. Trade-off: Alloy style lacks the
+  Chrome UI and some Chrome features, so downloads, permission prompts, popups and error pages are ours to build.
 - `cef` 156.4.0 from crates.io cannot build as is: its CEF download fails because the CDN `index.json` is over the 10 MB
   response limit in `download-cef`; cef-rs master has the same limit. Worked around with a local patch when exporting CEF.
 - Windows needs CMake and Ninja as well as Visual Studio. The minimal CEF runtime is about 426 MB extracted.
@@ -94,6 +98,6 @@ native window from the tooling used, so anything visual or typed is marked **not
 1. Run tests 2, 3 and 5 with a person at the keyboard (or add input automation): overlay drag, `Ctrl+P` with page,
    input and iframe focus, `Escape` focus restore, pane focus and a draggable divider, plus DPI and IME notes.
 2. Fix Alloy shutdown; try a real login cookie flow (not just localStorage) for test 4.
-3. Confirm Alloy's support horizon with the CEF project, and test whether one Chrome-style window per pane (two native
-   windows) is a workable alternative if Alloy is not an option.
+3. List which Chrome-only features we lose with Alloy-style views (downloads, permissions, printing, extensions) and
+   keep the style choice behind one function so a CEF change is a small edit.
 4. Time-box candidate B (Tauri with CEF) against the same five tests only if A cannot reach a pass.
