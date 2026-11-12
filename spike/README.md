@@ -43,3 +43,4 @@ view while it is on screen.
 the request is aborted, the frames are clean and no processes leak. Needs node and ffmpeg on PATH.
 `busy.ps1` destroys workspace C's view while its page is busy (spinning script, event stream, WebSocket, download, alert dialog, popup) and
 reports survival, processes and what the server saw (`-Routes`, `-AppFlags`, `-AutoDestroyMs`). Needs node on PATH.
+`busy.ps1 -Routes geo,notify,clipboard,camera` (with `-AppFlags '--own-permissions'` and optionally `--drop-permission`) destroys the view with a permission prompt open.

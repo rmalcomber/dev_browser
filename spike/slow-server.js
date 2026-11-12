@@ -2,7 +2,7 @@
 // /page (default)  answers after delayMs with a solid green page            /busy      green page whose script spins forever
 // /sse             page holding an endless event stream open                /ws        page holding a WebSocket open
 // /download        page that starts a download that never finishes          /alert     page that opens alert() and sets onbeforeunload
-// /popup           page that calls window.open on load
+// /popup           page that calls window.open on load                       /geo /notify /clipboard /camera  pages that ask for a permission
 // Every request, abort and close is logged so a run can say whether the connection really went away.
 const http = require('http'), crypto = require('crypto'), fs = require('fs');
 const [port, delay, log] = [+process.argv[2], +(process.argv[3] || 3000), process.argv[4]];
@@ -15,6 +15,10 @@ const pages = {
   '/download': green('setTimeout(function(){ var a = document.createElement("a"); a.href = "/file"; a.download = "big.bin"; document.body.appendChild(a); a.click(); }, 300)', '<b>D</b>'),
   '/alert': green('window.onbeforeunload = function(){ return "stay"; }; setTimeout(function(){ alert("hello from workspace C"); }, 300)', '<b>!</b>'),
   '/popup': green('setTimeout(function(){ window.open("/popped", "_blank"); }, 300)', '<b>P</b>'),
+  '/geo': green('setTimeout(function(){ navigator.geolocation.getCurrentPosition(function(){}, function(){}); }, 300)', '<b>G</b>'),
+  '/notify': green('setTimeout(function(){ Notification.requestPermission(); }, 300)', '<b>N</b>'),
+  '/clipboard': green('setTimeout(function(){ navigator.clipboard.readText().catch(function(){}); }, 300)', '<b>K</b>'),
+  '/camera': green('setTimeout(function(){ navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(function(){}); }, 300)', '<b>M</b>'),
   '/popped': green('', '<b>popup</b>'),
 };
 const server = http.createServer((req, res) => {

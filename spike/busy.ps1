@@ -41,7 +41,7 @@ foreach ($route in $Routes) {
   Chord 0x34; Start-Sleep 3.5          # recreate C from the kept context
   $recreated = (Get-Content busy.out | Where-Object { $_ -match 'recreating workspace C' }).Count
   $aliveEnd = -not $p.HasExited
-  $dialogLines = (Get-Content busy.out | Where-Object { $_ -match 'dialog' } | ForEach-Object { $_ -replace '^[m0] ', '' }) -join ' | '
+  $dialogLines = (Get-Content busy.out | Where-Object { $_ -match 'dialog|permission' } | ForEach-Object { $_ -replace '^[m0] ', '' }) -join ' | '
   if ($dialogLines) { Write-Host "  app: $dialogLines" }
   $stderr = Get-Content busy.err | Where-Object { $_ -match 'panicked|RefCell|already borrowed' } | Select-Object -First 1
   $srvLines = if (Test-Path $srvlog) { Get-Content $srvlog | ForEach-Object { ($_ -split ' ', 2)[1] } } else { @() }

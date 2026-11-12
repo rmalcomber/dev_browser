@@ -205,6 +205,36 @@ Not checked: confirm and prompt dialogs (only alert and beforeunload), a real cu
 pickers, permission prompts, downloads with a download handler and UI, media or WebRTC in the page, service workers, and
 popups the app chooses to allow.
 
+### Destroying a view with a permission prompt open (checked 2026-11-12)
+
+Same harness (`busy.ps1`, `-Routes geo,notify,clipboard,camera`) with pages that ask for geolocation, notifications, clipboard read,
+and camera plus microphone, three ways: CEF's default handling, `--own-permissions` (the app takes every prompt and keeps its
+callback pending, as a browser-owned prompt UI would; on destroy it dismisses them), and `--own-permissions --drop-permission`
+(the callbacks are released without an answer). The view is destroyed from a timer while the prompt is open.
+
+| Request | Bits the app saw | Default | App-held, dismissed on destroy | App-held, dropped |
+| --- | --- | --- | --- | --- |
+| geolocation | `0x100` | survived | survived | survived |
+| notifications | `0x8000` | survived | survived | survived |
+| clipboard read | `0x10` | survived | survived | survived |
+| camera + microphone | `0x3` (media path) | survived | survived | survived |
+
+Every case survived, recreated the view fine and left the browser list at four. Camera and microphone arrive through a different
+callback (`on_request_media_access_permission`, cancelled with `cancel()`) from the other three (`on_show_permission_prompt`,
+answered with `PermissionRequestResult::DISMISS`); a browser-owned prompt UI needs both. After a dismiss CEF still reports the prompt as
+dismissed, and after a drop it dismisses it itself.
+
+One side effect worth knowing: **a camera or microphone request starts helper processes that outlive the view.** The count went
+from 9 to 12 with the request pending and settled at 11 after the destroy, stayed at 11 for over a minute, did not grow over five more
+create/destroy cycles, and went to 0 on a normal close (one click on X). The two extra processes are media services (audio capture
+and video capture). When the app's own processes were force-killed, an orphaned `--type=utility` AudioService process survived the
+parent, so the real app should not rely on children dying with a crashed parent (look at job objects and a start-up sweep).
+
+Not checked: what CEF's default handling shows or does with these prompts (no screenshot of a native prompt was taken; the
+default run only proves it does not crash), real accept and deny paths (`PermissionRequestResult::ACCEPT` and the stored
+decision), per-origin persistence, permission prompts in the second pane while a different workspace is on screen, and prompts
+from iframes.
+
 ### Workspace outline and saved divider position (checked 2026-11-12)
 
 - **Outline.** Each pane sits in a wrapper panel whose background is the workspace accent colour (A amber, B violet), showing as

@@ -57,6 +57,8 @@ struct St {
 
 thread_local! { static ST: RefCell<St> = RefCell::new(St::default()); }
 thread_local! { static PENDING_DIALOGS: RefCell<Vec<JsdialogCallback>> = RefCell::new(Vec::new()); }
+thread_local! { static PENDING_PERMS: RefCell<Vec<PermissionPromptCallback>> = RefCell::new(Vec::new()); }
+thread_local! { static PENDING_MEDIA: RefCell<Vec<MediaAccessCallback>> = RefCell::new(Vec::new()); }
 
 fn arg(name: &str) -> String {
     let cl = command_line_get_global().expect("command line");
@@ -156,6 +158,18 @@ fn destroy_fresh_view(source: &str) {
     if !pending.is_empty() {
         if flag("drop-dialog") { println!("[m0] {} pending dialog(s) dropped without an answer", pending.len()); drop(pending); }
         else { for cb in pending { cb.cont(0, Some(&CefString::from(""))); } println!("[m0] pending dialog(s) cancelled before destroying"); }
+    }
+    // same for permission prompts: a browser-owned prompt UI must resolve or release what the destroyed view still has pending
+    let perms: Vec<PermissionPromptCallback> = PENDING_PERMS.with(|p| p.borrow_mut().drain(..).collect());
+    let media: Vec<MediaAccessCallback> = PENDING_MEDIA.with(|p| p.borrow_mut().drain(..).collect());
+    if !perms.is_empty() || !media.is_empty() {
+        if flag("drop-permission") { println!("[m0] {} permission prompt(s) and {} media request(s) dropped without an answer", perms.len(), media.len()); drop(perms); drop(media); }
+        else {
+            let n = (perms.len(), media.len());
+            for cb in perms { cb.cont(PermissionRequestResult::DISMISS); }
+            for cb in media { cb.cancel(); }
+            println!("[m0] {} permission prompt(s) and {} media request(s) dismissed before destroying", n.0, n.1);
+        }
     }
     // Finding: closing a view's browser while it is still in the window closes the whole window (every browser, then the
     // app). Detach the view first, then close its browser.
@@ -423,6 +437,27 @@ wrap_jsdialog_handler! {
     }
 }
 
+// Permission prompts (geolocation, notifications, clipboard, camera and microphone). With --own-permissions the app takes every
+// prompt and keeps its callback pending, as a browser-owned prompt UI would; without it CEF does what it does by default.
+wrap_permission_handler! {
+    struct SpikePerms {}
+    impl PermissionHandler {
+        fn on_show_permission_prompt(&self, _b: Option<&mut Browser>, id: u64, origin: Option<&CefString>, perms: u32, cb: Option<&mut PermissionPromptCallback>) -> i32 {
+            println!("[m0] permission prompt #{id} from {} (permission bits 0x{perms:x}) held by the app", origin.map(|o| o.to_string()).unwrap_or_default());
+            if let Some(cb) = cb { PENDING_PERMS.with(|p| p.borrow_mut().push(cb.clone())); }
+            1
+        }
+        fn on_request_media_access_permission(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, origin: Option<&CefString>, perms: u32, cb: Option<&mut MediaAccessCallback>) -> i32 {
+            println!("[m0] media permission request from {} (bits 0x{perms:x}) held by the app", origin.map(|o| o.to_string()).unwrap_or_default());
+            if let Some(cb) = cb { PENDING_MEDIA.with(|p| p.borrow_mut().push(cb.clone())); }
+            1
+        }
+        fn on_dismiss_permission_prompt(&self, _b: Option<&mut Browser>, id: u64, _r: PermissionRequestResult) {
+            println!("[m0] permission prompt #{id} dismissed by CEF");
+        }
+    }
+}
+
 wrap_load_handler! {
     struct SpikeLoad { role: u8 }
     impl LoadHandler {
@@ -485,6 +520,7 @@ wrap_client! {
         fn display_handler(&self) -> Option<DisplayHandler> { Some(SpikeDisplay::new(self.role)) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(SpikeLoad::new(self.role)) }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(SpikeLife::new()) }
+        fn permission_handler(&self) -> Option<PermissionHandler> { if flag("own-permissions") { Some(SpikePerms::new()) } else { None } }
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { if flag("native-dialogs") { None } else { Some(SpikeDialogs::new(self.role)) } }
     }
 }
