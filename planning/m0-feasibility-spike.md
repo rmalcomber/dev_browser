@@ -95,12 +95,32 @@ Every frame was exactly split (red|blue), only A (red|red) or only B (blue|blue)
 no frame still showing the old workspace's colour after the switch. The analyser was sanity-checked on a synthetic capture and
 flags a mixed frame (over 15% of a half wrong) and a black one.
 
-**Limits.** (1) Both workspace views already existed and had painted before the first switch; the risky case is switching
-to a view that is created or first shown at that moment (a stale GPU surface could show the old workspace's pixels), which
-needs the real tab model. (2) A sliver under 15% of a half, or a flash shorter than the capture can see, would not be
+**Limits.** (1) Both workspace views already existed and had painted before the first switch; the freshly created case is
+checked in the next section. (2) A sliver under 15% of a half, or a flash shorter than the capture can see, would not be
 flagged. (3) Screen capture shows what the compositor presented, which is what a user sees, but at 60 fps. (4) Pages were
 solid colours, not real sites; tool panels and the widget panel are not in the spike. (5) No OS-level focus or
 taskbar-preview leak check: the spec's "collapsed workspace shows no tab data" is a sidebar rule the spike does not have.
+
+### Swap to a freshly created view (checked 2026-11-12)
+
+The case the first swap check left open. `Ctrl+4` creates workspace C on the spot (a new request context with its own cache path,
+then a browser view, then it loads a solid green page) and shows it alone; the old workspaces are hidden at once, never left up
+while the new one loads (the spec's screen-sharing rule). `flash.ps1 -Fresh` records 60 fps while doing split -> new C -> split -> C again.
+
+| Case | Frames between the last old frame and the new content | What they were |
+| --- | --- | --- |
+| New view, default browser background | 4 | 1 dark, then **3 white** (about 67 ms): a white flash |
+| New view, dark browser background (the spike's default now) | 2 to 5 (33 to 83 ms, three runs) | dark only |
+| Switching back to an existing view | 0 | straight to the content |
+| New view loading a real site (example.org) | none stale | dark throughout; no red or blue (old-workspace) frame after the switch |
+
+So in no run did a frame of the previous workspace's content appear after the switch, which is the privacy-relevant part. The
+real flash was white: a new view's native window shows white until its first paint. Giving the browser a dark
+`background_color` (matching the app) turns that gap into a few dark frames. The sequence is: old content, a short dark gap,
+new content. Keep that behaviour (hide old first, neutral background) in the real tab model, and re-run this check there.
+
+Still open: a view that is destroyed and recreated rather than created once; lazily restored tabs; switching while a view is
+mid-load; and sites that paint white themselves (their own white page is their content, not our flash).
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 

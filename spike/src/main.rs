@@ -27,6 +27,7 @@ const VK_1: i32 = 0x31;
 const VK_2: i32 = 0x32;
 const VK_ESCAPE: i32 = 0x1B;
 const VK_3: i32 = 0x33;
+const VK_4: i32 = 0x34;
 const CTRL: u32 = 1 << 2; // EVENTFLAG_CONTROL_DOWN
 
 #[derive(Default)]
@@ -45,7 +46,9 @@ struct St {
     ratio: f32,
     panel: Option<Panel>,
     last_layout: (i32, i32, i32),
-    pane_w: [i32; 2],
+    pane_w: [i32; 3],
+    fresh: Option<(Panel, BrowserView)>, // workspace C, created on first use
+    fresh_ctx: Option<RequestContext>,
     wrappers: Vec<Panel>,
     mode: u8, // 0 split, 1 workspace A only, 2 workspace B only (the spike's stand-in for switching workspace)
     ctxs: Vec<RequestContext>,
@@ -89,15 +92,76 @@ fn set_overlay_visible(show: bool) {
 
 // Spike stand-in for switching workspace: split -> only workspace A -> only workspace B -> split.
 fn cycle_mode() {
-    let (mode, wr, dv, panes) = ST.with(|s| { let mut s = s.borrow_mut(); s.mode = (s.mode + 1) % 3; (s.mode, s.wrappers.clone(), s.divider_view.clone(), s.pane_views.clone()) });
+    let (mode, wr, dv, panes) = ST.with(|s| { let mut s = s.borrow_mut(); s.mode = if s.mode >= 2 { if s.mode == 3 { 0 } else { 0 } } else { s.mode + 1 }; (s.mode, s.wrappers.clone(), s.divider_view.clone(), s.pane_views.clone()) });
     if wr.len() != 2 { return }
     wr[0].set_visible((mode != 2) as i32);
     wr[1].set_visible((mode != 1) as i32);
     if let Some(d) = dv.as_ref() { d.set_visible((mode == 0) as i32); }
+    if let Some((cw, _)) = ST.with(|s| s.borrow().fresh.clone()) { cw.set_visible(0); }
     println!("[m0] mode: {}", match mode { 0 => "split", 1 => "workspace A only", _ => "workspace B only" });
     relayout();
     let focus = match mode { 1 => 0, 2 => 1, _ => ST.with(|s| s.borrow().last_pane) };
     if let Some(p) = panes.get(focus) { p.request_focus(); }
+}
+
+// Workspace C is created the first time it is asked for (new request context, then a browser view, then it loads), which is
+// the case a flash is most likely in: the view has never painted.
+wrap_request_context_handler! {
+    struct SpikeRchFresh {}
+    impl RequestContextHandler {
+        fn on_request_context_initialized(&self, _c: Option<&mut RequestContext>) {
+            println!("[m0] workspace C context ready");
+            create_fresh_view();
+        }
+    }
+}
+
+fn start_fresh_workspace() {
+    let (exists, wr, dv) = ST.with(|s| { let s = s.borrow(); (s.fresh.is_some(), s.wrappers.clone(), s.divider_view.clone()) });
+    if wr.len() != 2 { return }
+    ST.with(|s| s.borrow_mut().mode = 3);
+    // hide the old workspace at once (never leave its content up while the new one loads: the spec's screen-share rule)
+    wr[0].set_visible(0); wr[1].set_visible(0);
+    if let Some(d) = dv.as_ref() { d.set_visible(0); }
+    println!("[m0] mode: workspace C (fresh view), exists={exists}");
+    if exists {
+        if let Some((cw, _)) = ST.with(|s| s.borrow().fresh.clone()) { cw.set_visible(1); }
+        wr[0].set_visible(0); wr[1].set_visible(0);
+        if let Some(d) = dv.as_ref() { d.set_visible(0); }
+        relayout();
+        return;
+    }
+    let root = std::env::current_dir().unwrap().join(".m0-data").join("chromium-root");
+    let cache = root.join("ws-c");
+    let _ = std::fs::create_dir_all(&cache);
+    let rcs = RequestContextSettings { cache_path: CefString::from(cache.to_string_lossy().as_ref()), persist_session_cookies: 1, ..Default::default() };
+    let mut h = SpikeRchFresh::new();
+    let ctx = request_context_create_context(Some(&rcs), Some(&mut h)).expect("request context C");
+    ST.with(|s| s.borrow_mut().fresh_ctx = Some(ctx));
+}
+
+fn create_fresh_view() {
+    let (ctx, panel) = ST.with(|s| { let s = s.borrow(); (s.fresh_ctx.clone(), s.panel.clone()) });
+    let (Some(mut ctx), Some(panel)) = (ctx, panel) else { return };
+    let url_c = arg("url-c");
+    let url = if url_c.is_empty() { "data:text/html,<body%20style=background:%230a0;color:%23fff;font:200px%20sans-serif><b>C</b>".to_string() } else { url_c };
+    let url = url.as_str();
+    let mut client = SpikeClient::new(2);
+    let mut bvd = SpikePaneBvd::new(2);
+    let bv = browser_view_create(Some(&mut client), Some(&CefString::from(url)), Some(&bsettings()), None, Some(&mut ctx), Some(&mut bvd)).expect("browser view C");
+    let mut wd = SpikeWrapDelegate::new();
+    let wrap = panel_create(Some(&mut wd)).expect("wrapper C");
+    wrap.set_background_color(argb(ACCENTS[2], false));
+    let l = wrap.set_to_box_layout(Some(&BoxLayoutSettings { horizontal: 1, inside_border_insets: Insets { top: BORDER, left: BORDER, bottom: BORDER, right: BORDER }, cross_axis_alignment: AxisAlignment::STRETCH, ..Default::default() }));
+    let mut wv = View::from(&wrap);
+    panel.add_child_view(Some(&mut wv));
+    let mut v = View::from(&bv);
+    wrap.add_child_view(Some(&mut v));
+    if let Some(l) = l.as_ref() { l.set_flex_for_view(Some(&mut v), 0); }
+    ST.with(|s| s.borrow_mut().fresh = Some((wrap.clone(), bv.clone())));
+    wrap.set_visible(1);
+    println!("[m0] workspace C view created and shown");
+    relayout();
 }
 
 fn toggle_overlay() {
@@ -148,7 +212,14 @@ const MIN_PANE: i32 = 120;
 // Workspace outline: each pane sits in a wrapper panel whose background is the workspace accent colour, showing as a
 // BORDER-px frame. The focused pane's frame is the full colour, the other is dimmed.
 const BORDER: i32 = 3;
-const ACCENTS: [u32; 2] = [0xF4A261, 0xA78BFA]; // workspace A amber, workspace B violet (RGB)
+const ACCENTS: [u32; 3] = [0xF4A261, 0xA78BFA, 0x2ECC71]; // workspace A amber, workspace B violet (RGB)
+
+// Finding: a freshly created browser view showed about three white frames before its first paint. A dark background colour
+// on the browser (matching the app) makes that gap dark instead. Disable with --white-bg to reproduce.
+fn bsettings() -> BrowserSettings {
+    let white = std::env::args().any(|a| a == "--white-bg");
+    BrowserSettings { background_color: if white { 0 } else { 0xFF1E1E1E }, ..Default::default() }
+}
 
 fn argb(rgb: u32, dim: bool) -> u32 {
     if !dim { return 0xFF00_0000 | rgb }
@@ -190,10 +261,14 @@ fn relayout() {
     let (mut va, mut vd, mut vb) = (View::from(&wrappers[0]), View::from(&divider), View::from(&wrappers[1]));
     let (pa, pb) = (View::from(&panes[0]), View::from(&panes[1]));
     for v in [&mut va, &mut vd, &mut vb] { layout.set_flex_for_view(Some(v), 0); }
+    if let Some((cw, cb)) = ST.with(|s| s.borrow().fresh.clone()) {
+        let mut vc = View::from(&cw); layout.set_flex_for_view(Some(&mut vc), 0);
+        let vcb = View::from(&cb); vcb.invalidate_layout(); vc.invalidate_layout();
+    }
     // In single-workspace mode the visible pane takes the whole width (hidden views are skipped by the layout).
-    let widths = match mode { 1 => [size.width, 0], 2 => [0, size.width], _ => [wa, avail - wa] };
+    let widths = match mode { 1 => [size.width, 0, 0], 2 => [0, size.width, 0], 3 => [0, 0, size.width], _ => [wa, avail - wa, 0] };
     ST.with(|s| s.borrow_mut().pane_w = widths);
-    println!("[m0] relayout: mode {mode} panel {}x{} -> A={}px B={}px (ratio {:.3})", size.width, size.height, widths[0], widths[1], wa as f32 / avail as f32);
+    println!("[m0] relayout: mode {mode} panel {}x{} -> A={}px B={}px C={}px (ratio {:.3})", size.width, size.height, widths[0], widths[1], widths[2], wa as f32 / avail as f32);
     pa.invalidate_layout();
     pb.invalidate_layout();
     va.invalidate_layout();
@@ -236,6 +311,7 @@ wrap_keyboard_handler! {
                 return 1;
             }
             if ctrl && e.windows_key_code == VK_3 && self.role != OVERLAY { cycle_mode(); return 1; }
+            if ctrl && e.windows_key_code == VK_4 && self.role != OVERLAY { start_fresh_workspace(); return 1; }
             if ctrl && (e.windows_key_code == VK_1 || e.windows_key_code == VK_2) && self.role != OVERLAY {
                 focus_pane(if e.windows_key_code == VK_1 { 0 } else { 1 });
                 return 1;
@@ -567,7 +643,7 @@ fn build_ui() {
         let url = if urls[i].is_empty() { "https://example.com/".to_string() } else { urls[i].clone() };
         let mut client = SpikeClient::new(role);
         let mut bvd = if !flag("chrome") { Some(SpikePaneBvd::new(i)) } else { None };
-        let bv = browser_view_create(Some(&mut client), Some(&CefString::from(url.as_str())), Some(&BrowserSettings::default()), None, Some(ctx), bvd.as_mut()).expect("browser view");
+        let bv = browser_view_create(Some(&mut client), Some(&CefString::from(url.as_str())), Some(&bsettings()), None, Some(ctx), bvd.as_mut()).expect("browser view");
         println!("[m0] pane {} cef cache_path={:?} global={}", role_name(role), CefString::from(&ctx.cache_path()).to_string(), ctx.is_global());
         panes.push(bv);
     }
@@ -576,13 +652,13 @@ fn build_ui() {
     let ourl = format!("file:///{}", page.to_string_lossy().replace("\\", "/"));
     let mut oclient = SpikeClient::new(OVERLAY);
     let mut bvd2 = if !flag("chrome") { Some(SpikeBvd::new()) } else { None };
-    let ov = if flag("noov") { None } else { Some(browser_view_create(Some(&mut oclient), Some(&CefString::from(ourl.as_str())), Some(&BrowserSettings::default()), None, None, bvd2.as_mut()).expect("overlay view")) };
+    let ov = if flag("noov") { None } else { Some(browser_view_create(Some(&mut oclient), Some(&CefString::from(ourl.as_str())), Some(&bsettings()), None, None, bvd2.as_mut()).expect("overlay view")) };
     let dpage = root.parent().unwrap().join("divider.html");
     std::fs::write(&dpage, divider_html()).unwrap();
     let durl = format!("file:///{}", dpage.to_string_lossy().replace("\\", "/"));
     let mut dclient = SpikeClient::new(DIVIDER);
     let mut dbvd = SpikeDividerBvd::new();
-    let dv = if panes.len() == 2 && !flag("nodiv") { browser_view_create(Some(&mut dclient), Some(&CefString::from(durl.as_str())), Some(&BrowserSettings::default()), None, None, Some(&mut dbvd)) } else { None };
+    let dv = if panes.len() == 2 && !flag("nodiv") { browser_view_create(Some(&mut dclient), Some(&CefString::from(durl.as_str())), Some(&bsettings()), None, None, Some(&mut dbvd)) } else { None };
     ST.with(|s| { let mut s = s.borrow_mut(); s.pane_views = panes; s.overlay_view = ov; s.divider_view = dv; });
 
     let secs: i64 = arg("exit-after").parse().unwrap_or(0);

@@ -35,3 +35,5 @@ The split ratio lives in `.m0-data/divider.ratio` (delete it to reset to 50/50).
 `Ctrl+3` cycles split / only workspace A / only workspace B (the spike's stand-in for switching workspace). `flash.ps1` records the
 window at 60 fps with ffmpeg while pressing it and `flash-analyze.js` reports any frame that is not a clean split or single-workspace
 layout (`-Presses` and `-GapMs` set how many swaps and how fast). Needs ffmpeg and node on PATH.
+`Ctrl+4` creates workspace C on the spot and shows it alone; `flash.ps1 -Fresh` checks that swap (add `-AppFlags '--white-bg'` to see the white
+flash a new view shows with the default browser background).
