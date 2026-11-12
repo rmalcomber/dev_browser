@@ -45,6 +45,7 @@ struct St {
     panel: Option<Panel>,
     last_layout: (i32, i32, i32),
     pane_w: [i32; 2],
+    wrappers: Vec<Panel>,
     ctxs: Vec<RequestContext>,
     ctx_ready: usize,
 }
@@ -129,10 +130,37 @@ fn on_overlay_title(t: &str) {
 // the left pane showed only its background, or its content flickered over the right pane.)
 const DIV_W: i32 = 6;
 const MIN_PANE: i32 = 120;
+// Workspace outline: each pane sits in a wrapper panel whose background is the workspace accent colour, showing as a
+// BORDER-px frame. The focused pane's frame is the full colour, the other is dimmed.
+const BORDER: i32 = 3;
+const ACCENTS: [u32; 2] = [0xF4A261, 0xA78BFA]; // workspace A amber, workspace B violet (RGB)
+
+fn argb(rgb: u32, dim: bool) -> u32 {
+    if !dim { return 0xFF00_0000 | rgb }
+    // blend 65% towards the dark page background so the frame is visible but clearly weaker
+    let (r, g, b) = ((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+    let mix = |c: u32| (c * 35 + 0x22 * 65) / 100;
+    0xFF00_0000 | (mix(r) << 16) | (mix(g) << 8) | mix(b)
+}
+
+fn update_outline() {
+    let (wr, focused) = ST.with(|s| { let s = s.borrow(); (s.wrappers.clone(), s.last_pane) });
+    for (i, w) in wr.iter().enumerate() {
+        w.set_background_color(argb(ACCENTS[i], i != focused));
+    }
+    println!("[m0] outline: focused pane {} full accent, other dimmed", focused + 1);
+}
+
+fn state_file() -> std::path::PathBuf { std::env::current_dir().unwrap().join(".m0-data").join("divider.ratio") }
+fn load_ratio() -> Option<f32> {
+    let r: f32 = std::fs::read_to_string(state_file()).ok()?.trim().parse().ok()?;
+    if r > 0.05 && r < 0.95 { Some(r) } else { None }
+}
+fn save_ratio(r: f32) { let _ = std::fs::write(state_file(), format!("{r:.4}")); }
 
 fn relayout() {
-    let (panes, divider, ratio, panel) = ST.with(|s| { let s = s.borrow(); (s.pane_views.clone(), s.divider_view.clone(), if s.ratio > 0.0 { s.ratio } else { 0.5 }, s.panel.clone()) });
-    let (Some(divider), Some(panel), true) = (divider, panel, panes.len() == 2) else { return };
+    let (panes, divider, ratio, panel, wrappers) = ST.with(|s| { let s = s.borrow(); (s.pane_views.clone(), s.divider_view.clone(), if s.ratio > 0.0 { s.ratio } else { 0.5 }, s.panel.clone(), s.wrappers.clone()) });
+    let (Some(divider), Some(panel), true) = (divider, panel, panes.len() == 2 && wrappers.len() == 2) else { return };
     let size = panel.size();
     if size.width <= 0 || size.height <= 0 { return }
     let avail = size.width - DIV_W;
@@ -143,10 +171,13 @@ fn relayout() {
     // A box layout on the panel keeps the native browser windows in step with the views; re-installing it with new
     // weights is what re-flows it (changing flex on an installed layout did not).
     let Some(layout) = panel.set_to_box_layout(Some(&BoxLayoutSettings { horizontal: 1, cross_axis_alignment: AxisAlignment::STRETCH, ..Default::default() })) else { return };
-    let (mut va, mut vd, mut vb) = (View::from(&panes[0]), View::from(&divider), View::from(&panes[1]));
+    let (mut va, mut vd, mut vb) = (View::from(&wrappers[0]), View::from(&divider), View::from(&wrappers[1]));
+    let (pa, pb) = (View::from(&panes[0]), View::from(&panes[1]));
     for v in [&mut va, &mut vd, &mut vb] { layout.set_flex_for_view(Some(v), 0); }
     ST.with(|s| s.borrow_mut().pane_w = [wa, avail - wa]);
     println!("[m0] relayout: panel {}x{} -> A={wa}px divider={DIV_W}px B={}px (ratio {:.3})", size.width, size.height, avail - wa, wa as f32 / avail as f32);
+    pa.invalidate_layout();
+    pb.invalidate_layout();
     va.invalidate_layout();
     vb.invalidate_layout();
     panel.invalidate_layout();
@@ -160,13 +191,15 @@ fn on_divider_title(t: &str) {
         let mut s = s.borrow_mut();
         if p[1] <= s.div_seen { return vec![]; }
         s.div_seen = p[1];
-        s.pane_views.clone()
+        s.wrappers.clone()
     });
     if panes.len() != 2 { return }
     let (wa, wb) = (panes[0].bounds().width, panes[1].bounds().width);
     let avail = wa + wb;
     let new_a = (wa + p[0]).clamp(MIN_PANE, (avail - MIN_PANE).max(MIN_PANE));
-    ST.with(|s| s.borrow_mut().ratio = new_a as f32 / avail as f32);
+    let ratio = new_a as f32 / avail as f32;
+    ST.with(|s| s.borrow_mut().ratio = ratio);
+    save_ratio(ratio);
     relayout();
     println!("[m0] divider moved: A {wa}px -> {}px, B {wb}px -> {}px", panes[0].bounds().width, panes[1].bounds().width);
 }
@@ -203,7 +236,10 @@ wrap_focus_handler! {
     impl FocusHandler {
         fn on_got_focus(&self, _b: Option<&mut Browser>) {
             println!("[m0] got-focus {}", role_name(self.role));
-            if self.role != OVERLAY { ST.with(|s| s.borrow_mut().last_pane = self.role as usize); }
+            if self.role == PANE_A || self.role == PANE_B {
+                ST.with(|s| s.borrow_mut().last_pane = self.role as usize);
+                update_outline();
+            }
         }
     }
 }
@@ -308,12 +344,18 @@ wrap_browser_view_delegate! {
     impl ViewDelegate {
         fn preferred_size(&self, _v: Option<&mut View>) -> Size {
             let w = ST.with(|s| s.borrow().pane_w[self.idx]);
-            Size { width: w.max(1), height: 100 }
+            Size { width: (w - 2 * BORDER).max(1), height: 100 }
         }
     }
     impl BrowserViewDelegate {
         fn browser_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::ALLOY }
     }
+}
+
+wrap_panel_delegate! {
+    struct SpikeWrapDelegate {}
+    impl ViewDelegate {}
+    impl PanelDelegate {}
 }
 
 wrap_browser_view_delegate! {
@@ -345,12 +387,23 @@ wrap_window_delegate! {
             window.add_child_view(Some(&mut pv));
             // The panel's box layout positions children in add order: left pane, divider, right pane.
             let order: Vec<usize> = vec![0, 1];
+            let mut wrappers: Vec<Panel> = vec![];
             for (n, &i) in order.iter().enumerate() {
                 if n == 1 { if let Some(d) = divider.as_ref() { let mut dv = View::from(d); panel.add_child_view(Some(&mut dv)); } }
+                // wrapper panel = the coloured frame; the browser view fills it inside a BORDER-px inset
+                let mut wd = SpikeWrapDelegate::new();
+                let wrap = panel_create(Some(&mut wd)).expect("wrapper panel");
+                wrap.set_background_color(argb(ACCENTS[i], i != 0));
+                let l = wrap.set_to_box_layout(Some(&BoxLayoutSettings { horizontal: 1, inside_border_insets: Insets { top: BORDER, left: BORDER, bottom: BORDER, right: BORDER }, cross_axis_alignment: AxisAlignment::STRETCH, ..Default::default() }));
+                let mut wv = View::from(&wrap);
+                panel.add_child_view(Some(&mut wv));
                 let mut v = View::from(&panes[i]);
-                panel.add_child_view(Some(&mut v));
+                wrap.add_child_view(Some(&mut v));
+                if let Some(l) = l.as_ref() { l.set_flex_for_view(Some(&mut v), 0); }
+                wrappers.push(wrap);
             }
-            ST.with(|s| s.borrow_mut().panel = Some(panel.clone()));
+            ST.with(|s| { let mut s = s.borrow_mut(); s.panel = Some(panel.clone()); s.wrappers = wrappers; });
+            update_outline();
             let layout: Option<BoxLayout> = None;
             // Test 2: overlay launcher above the live pages, custom docking, starts top-centre.
             let mut ctl = None;
@@ -484,6 +537,7 @@ wrap_request_context_handler! {
 }
 
 fn build_ui() {
+    if let Some(r) = load_ratio() { ST.with(|s| s.borrow_mut().ratio = r); println!("[m0] divider position loaded: {r:.4}"); } else { println!("[m0] no saved divider position; using 0.5"); }
     let root = std::env::current_dir().unwrap().join(".m0-data").join("chromium-root");
     let urls = [arg("url-a"), arg("url-b")];
     let mut ctxs = ST.with(|s| s.borrow().ctxs.clone());

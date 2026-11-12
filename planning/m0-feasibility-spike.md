@@ -29,7 +29,7 @@ lines of glue were needed, and what broke.
 | 2 | Overlay | **Pass for behaviour, not yet seen by eye.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created, shown and hidden over the live pages. A real mouse drag (`SendInput`) moved it by the expected steps (+10,+5 each, 12 steps) and the position is clamped to the window. Not checked: IME, real OS-level DPI (see below). |
 | 3 | `Ctrl+P` | **Pass in the cases run** (real key input via `SendInput`, read from the log): intercepted with focus in a page text input, in the iframe test area, and in the other pane; the page never saw it (`on_pre_key_event` returned handled). `Escape` closes the overlay and focus returns to the pane that had it (A or B). Not checked: that no print dialog flashes (the key is consumed before the page, so it should not), pages with their own `Ctrl+P` handler, a focused PDF viewer, non-US keyboard layouts. |
 | 4 | Two sessions | Two request contexts with distinct `cache_path` under one `root_cache_path`. Sign in to GitHub as two identities; both survive an app restart; cookies are not shared. | Both account names visible after restart |
-| 5 | Two panes | **Pass, seen by eye (screenshots) and by log.** In Alloy style both panes, a draggable divider and the overlay work in one window. A real mouse drag of the divider resizes the panes smoothly (+150, -300, then -400 stopping at the 120px minimum). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane. In Chrome style only the first browser view gets a browser. 20 screenshots over a few seconds settle to one steady frame. Window resize with the divider moved also works (see below). Not done: coloured outline, saving the divider position, flash-free *workspace* swaps. |
+| 5 | Two panes | **Pass, seen by eye (screenshots) and by log.** In Alloy style both panes, a draggable divider and the overlay work in one window. A real mouse drag of the divider resizes the panes smoothly (+150, -300, then -400 stopping at the 120px minimum). Clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane. In Chrome style only the first browser view gets a browser. 20 screenshots over a few seconds settle to one steady frame. Window resize with the divider moved works, each pane has a workspace-coloured outline that follows focus, and the divider position is saved and restored (see below). Not done: flash-free *workspace* swaps. |
 
 Use throwaway test accounts or a non-sensitive login where possible; never record credentials in this repo.
 
@@ -77,6 +77,21 @@ native window from the tooling used, so anything visual or typed is marked **not
 2. **Asynchronous profile creation.** With a valid path CEF creates the profile asynchronously, and `browser_view_create`
    returns `None` until `RequestContextHandler::on_request_context_initialized` has fired. Create the browser views from
    that callback (the spike builds its UI once every context is ready).
+
+### Workspace outline and saved divider position (checked 2026-11-12)
+
+- **Outline.** Each pane sits in a wrapper panel whose background is the workspace accent colour (A amber, B violet), showing as
+  a 3px frame around the page. The focused pane's frame is the full colour; the other is the same colour dimmed. Screenshots
+  show it, and that clicking the other pane swaps which frame is bright (log: `outline: focused pane N`). Frames
+  are steady across a ten-frame series. Wrapper panels needed the browser view at flex 0 with its preferred width reported;
+  with flex 1 the first pane took the whole window. Reminder from the spec: the outline is a visual cue, not a security boundary.
+- **Saved divider position.** The split ratio is written to `.m0-data/divider.ratio` on every divider move (a stand-in for
+  the global `browser.db` preference) and read at startup. `spike/persist.ps1`: run 1 dragged the divider +150px (ratio
+  0.626, A=738 / B=440) and closed with a single click on X; the file held `0.6265`; run 2 logged `divider position loaded: 0.6265`
+  and laid out A=738 / B=440 again, and its screenshot showed the wider left pane with both outlines. Not done: saving per
+  workspace pair, or the other split-view state (which tab is in which pane); out-of-range or corrupt files fall back to 0.5.
+- The earlier checks (`Ctrl+P`, `Escape`, pane focus, overlay drag, divider drag to the 120px minimum) still pass with the
+  wrapper panels.
 
 ### IME (not run, 2026-11-12)
 

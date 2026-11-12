@@ -30,3 +30,5 @@ Keys in the window: `Ctrl+P` toggles the overlay, `Esc` closes it, `Ctrl+1` / `C
 `flicker.ps1` takes a series of screenshots and counts distinct frames: 1 means steady. Both take extra app flags as one string,
 e.g. `-AppArgs '--url-a=data:text/html,<body%20style=background:red>'`. Keep the images out of the repo.
 `resize.ps1` moves the divider with the mouse, then resizes the window and prints the `[m0] relayout` lines (add `-OutDir` for screenshots).
+`persist.ps1` checks the saved divider position: it drags the divider, closes with one click on X, restarts and prints the loaded ratio.
+The split ratio lives in `.m0-data/divider.ratio` (delete it to reset to 50/50).
