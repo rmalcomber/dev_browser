@@ -7,7 +7,7 @@ Keep this file short. If a rule matters, it goes here; if it is detail, it goes 
 The Dev Browser is a personal, developer-oriented desktop browser written in Rust, rendering with embedded Chromium (CEF),
 with the Home Screen launcher and tools built in. Its core ideas: vertical tabs grouped by **workspace** (each with its own
 isolated login session and data), a browser-owned `Ctrl+P` launcher, a right-hand widget panel, and two-pane split view.
-Status: planning. No code yet; the first build step is the M0 feasibility spike.
+Status: planning, with the M0 feasibility spike under way in `spike/` (disposable).
 
 Start with `planning/README.md`, then `planning/home-screen-browser-spec.md` (the source spec) and
 `planning/roadmap-and-milestones.md`.

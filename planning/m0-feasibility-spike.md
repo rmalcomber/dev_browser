@@ -3,7 +3,7 @@
 **Goal:** answer, with evidence, whether a Rust host can embed Chromium with per-workspace sessions, a browser-owned
 overlay, reliable shortcut interception and two panes. Throwaway code is fine; the output is a decision, not a product.
 
-**Status:** not started. Needs Roy's approval before any dependency is added or CEF is downloaded (AGENTS.md).
+**Status:** in progress (see Results at the end). Needs Roy's approval before any dependency is added or CEF is downloaded (AGENTS.md).
 
 ## Decisions needed before starting
 
@@ -55,3 +55,45 @@ Use throwaway test accounts or a non-sensitive login where possible; never recor
 All five pass on the chosen candidate on Windows, or the spike ends with a written recommendation to change approach
 (for example a different shell, or a platform webview with weaker isolation, which would require revisiting the spec's
 privacy model).
+
+## Results so far (2026-11-12, Windows 11, candidate A: cef-rs 156.5.0 / CEF 156.0.28, Views framework)
+
+Code is in `spike/` (see its README). Checked from `[m0]` log lines and the files on disk only: I cannot see or drive the
+native window from the tooling used, so anything visual or typed is marked **not yet verified by eye**.
+
+| # | Test | Result |
+| --- | --- | --- |
+| 1 | Embed and navigate | **Pass.** Window opens, `https://example.com/` loads (HTTP 200). |
+| 2 | Overlay | **Partial.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created and loads its page. Dragging (a title-channel hack to move it) is coded, **not yet verified by eye**. |
+| 3 | `Ctrl+P` | **Coded, not yet run.** `on_pre_key_event` toggles the overlay and consumes the key; needs real key input into a focused window. |
+| 4 | Two sessions | **Pass (Alloy style).** Each workspace gets its own profile directory under the common root (`ws-a/`, `ws-b/`, each with its own `Local Storage`). A value written in A is still there after a restart and pane B never sees it, both runs. Authentication cookies not tried yet; localStorage on the same origin is the same storage partition test. |
+| 5 | Two panes | **Partial.** In Alloy style both panes and the overlay are created and laid out side by side (588x681 each). In Chrome style only the first browser view ever gets a browser. No divider drag yet (Views has no splitter). Focus switching and `Ctrl+1/2` are coded, **not yet verified by eye**. |
+
+### Why test 4 looked blocked, and what fixed it
+
+1. **Path separators.** CEF compares the request-context `cache_path` with its user data dir as strings. A forward-slash
+   path gave `Cannot create profile at path` and a silent fall-back to an in-memory profile on the global `Default/`
+   store (so data seemed to vanish). Use exactly the same (backslash) form as `root_cache_path`, and a directory directly under it.
+2. **Asynchronous profile creation.** With a valid path CEF creates the profile asynchronously, and `browser_view_create`
+   returns `None` until `RequestContextHandler::on_request_context_initialized` has fired. Create the browser views from
+   that callback (the spike builds its UI once every context is ready).
+
+### Findings worth keeping
+
+- **Chrome vs Alloy runtime style.** Chrome style (the CEF default) gave a browser only for the first `BrowserView` in a
+  window, so two panes in one window did not work. Alloy style does both panes and the overlay. Alloy is CEF's older style;
+  how long it stays supported needs checking before we depend on it (see open questions).
+- `cef` 156.4.0 from crates.io cannot build as is: its CEF download fails because the CDN `index.json` is over the 10 MB
+  response limit in `download-cef`; cef-rs master has the same limit. Worked around with a local patch when exporting CEF.
+- Windows needs CMake and Ninja as well as Visual Studio. The minimal CEF runtime is about 426 MB extracted.
+- Closing: Chrome style exits cleanly; in Alloy style the process did not exit after closing every browser (window
+  teardown still to sort out).
+
+### Next steps for M0
+
+1. Run tests 2, 3 and 5 with a person at the keyboard (or add input automation): overlay drag, `Ctrl+P` with page,
+   input and iframe focus, `Escape` focus restore, pane focus and a draggable divider, plus DPI and IME notes.
+2. Fix Alloy shutdown; try a real login cookie flow (not just localStorage) for test 4.
+3. Confirm Alloy's support horizon with the CEF project, and test whether one Chrome-style window per pane (two native
+   windows) is a workable alternative if Alloy is not an option.
+4. Time-box candidate B (Tauri with CEF) against the same five tests only if A cannot reach a pass.

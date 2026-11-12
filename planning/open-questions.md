@@ -18,3 +18,4 @@ linking it here.
 | 11 | UI framework for the shell: reuse Home Screen's stack as is? | Floppy Rule; see [home-screen-reuse.md](home-screen-reuse.md). | Confirm after M0 | Roy |
 | 12 | Licensing and redistribution terms for the CEF/Chromium binaries. | Affects packaging and the public repo. | Check before the first release | Roy |
 | 13 | Binary size budget. Chromium is far larger than the Floppy Rule's spirit. | Be explicit about the exception and what stays small (our code, docs, UI). | Record in decisions.md | Roy |
+| 14 | Chrome-style CEF hosts only one browser view per window; Alloy style hosts many but is the older style. How long is Alloy supported, and is one native window per pane an option? | Split view and the overlay depend on several browser views in one window. | Ask CEF forum / read release notes; test two windows (M0) | Evidence, then Roy |
