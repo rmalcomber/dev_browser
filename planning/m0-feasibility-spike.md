@@ -26,10 +26,10 @@ lines of glue were needed, and what broke.
 | # | Test | Pass means | Evidence |
 | --- | --- | --- | --- |
 | 1 | Embed and navigate | A page loads, back/forward work, event loop is stable on resize and close. | Screenshot, notes |
-| 2 | Overlay | A browser-owned draggable panel renders above a live page; dragging is smooth; works at 100% and 150% DPI and after resize. IME and focus noted. | Screen capture |
-| 3 | `Ctrl+P` | Opens our overlay, never the print dialog, while the page, an input, and an iframe have focus. `Escape` returns focus to the prior element. | Pre-key-event handler notes |
+| 2 | Overlay | **Pass for behaviour, not yet seen by eye.** An overlay (`add_overlay_view`, custom docking) hosting its own browser view is created, shown and hidden over the live pages. A real mouse drag (`SendInput`) moved it by the expected steps (+10,+5 each, 12 steps) and the position is clamped to the window. Not checked: how it looks, drag after a window resize, 150% DPI, IME. |
+| 3 | `Ctrl+P` | **Pass in the cases run** (real key input via `SendInput`, read from the log): intercepted with focus in a page text input, in the iframe test area, and in the other pane; the page never saw it (`on_pre_key_event` returned handled). `Escape` closes the overlay and focus returns to the pane that had it (A or B). Not checked: that no print dialog flashes (the key is consumed before the page, so it should not), pages with their own `Ctrl+P` handler, a focused PDF viewer, non-US keyboard layouts. |
 | 4 | Two sessions | Two request contexts with distinct `cache_path` under one `root_cache_path`. Sign in to GitHub as two identities; both survive an app restart; cookies are not shared. | Both account names visible after restart |
-| 5 | Two panes | Two views side by side with a draggable divider; click and keyboard focus go to the right view; `Ctrl+1/2` focus switch works; no flash of the wrong view when swapping. | Screen capture |
+| 5 | Two panes | **Mostly pass.** In Alloy style both panes and the overlay are created and laid out side by side (588x681 each). Mouse clicks and `Ctrl+1` / `Ctrl+2` move keyboard focus to the intended pane (confirmed by focus events), and the overlay returns focus to the right one. In Chrome style only the first browser view gets a browser. Not done: a draggable divider (Views has no splitter), the coloured outline, flash-free pane/workspace swaps (needs eyes). |
 
 Use throwaway test accounts or a non-sensitive login where possible; never record credentials in this repo.
 
@@ -95,8 +95,8 @@ native window from the tooling used, so anything visual or typed is marked **not
 
 ### Next steps for M0
 
-1. Run tests 2, 3 and 5 with a person at the keyboard (or add input automation): overlay drag, `Ctrl+P` with page,
-   input and iframe focus, `Escape` focus restore, pane focus and a draggable divider, plus DPI and IME notes.
+1. Look at the window once by eye (overlay position and look, no print dialog, no flashes) and try 150% DPI and a resize.
+   Add a draggable divider. Input automation lives in `spike/drive.ps1` (it takes over the mouse and keyboard while it runs).
 2. Fix Alloy shutdown; try a real login cookie flow (not just localStorage) for test 4.
 3. List which Chrome-only features we lose with Alloy-style views (downloads, permissions, printing, extensions) and
    keep the style choice behind one function so a CEF change is a small edit.
