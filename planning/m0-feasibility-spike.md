@@ -469,8 +469,36 @@ track matches what a live revoke looks like, so the spike keeps it. Second, when
 next request for both will now be refused as a whole (all or nothing, from earlier), so a site that wants to carry on must ask for the
 allowed kind alone; that is the standard way to handle a denied microphone, but it is worth a visible hint in the real prompt UI.
 
-Not checked: two pending calls with different kinds at once (the marking logic only touches calls that asked for the revoked kind),
-a revoke arriving after only one of the two tracks has been created, and a pending call in an iframe other than the one the stop reached.
+Not checked here (several pending calls are in the next section): a revoke arriving after only one of the two tracks has been created, and a
+pending call in an iframe other than the one the stop reached.
+
+### Several getUserMedia calls pending at once (checked 2026-11-12)
+
+Two or three calls made together: video only (V), audio only (A) and audio plus video (AV). One kind is revoked while they wait
+(`wrapper.ps1 -Only P -Sweep multi`, fake devices, stop sent once).
+
+**A finding first:** Chrome queues a frame's `getUserMedia` requests. The second call's request only reached the app after the first
+grant had been delivered (the first grant was held for 4 s and the next requests arrived behind it, roughly 4 s apart). So "pending
+in the page" is not the same as "pending in the app": the calls behind the first have not been decided yet. With the revoke also
+updating the store, a first run showed the app refusing the queued calls itself (store `0, 3` after revoking video), which hid the
+wrapper's own logic. The runs below use `--revoke-no-store`: only the stop goes out, the store keeps allowing everything, so what happens
+to each call is the wrapper's doing.
+
+| Scenario | V (video) | A (audio) | AV (audio + video) |
+| --- | --- | --- | --- |
+| P1 two calls, revoke audio | live | **rejected** `NotAllowedError` | - |
+| P2 two calls, revoke video | **rejected** | live | - |
+| P3 three calls, revoke audio | live | **rejected** | stream with `audio=ended video=live` |
+| P4 three calls, revoke all | rejected | rejected | rejected |
+
+So the marking is selective as intended: a call dies only if it asked for the revoked kind; a call for the other kind is untouched; a
+mixed call loses just the revoked kind. Calls that were still queued behind the first are included (they were pending in the page when
+the stop arrived), even though the app had not decided them and the store still allowed them. That is the right reading of "revoke now"
+for a real revoke, where the store changes too and would refuse them anyway; it would be wrong only if a revoke could be undone within
+the same instant, which the all-or-nothing rule and the store make unnecessary.
+
+Not checked here: many more than three calls, calls from different frames, and the timing of a stop that lands between the first and
+second grant.
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 

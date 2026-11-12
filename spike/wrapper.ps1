@@ -105,6 +105,17 @@ if ($Sweep -like 'kind-*') {
     Scenario "K-$k. two-kind request pending, revoke $k, wrapper $variant" "$base/livecam?who=Cp&kinds=both" @('--grant-n=1', '--revoke-after-grant-ms=500', '--delay-grant-ms=4000', "--revoke-stop=$k", '--answer-after-revoke=deny', '--stop-once', "--wrap=$variant")
   }
 }
+if ($Sweep -eq 'multi') {
+  # several getUserMedia calls pending at once (their grants are delivered 4 s late); one kind is revoked 0.5 s after the first decision
+  # --revoke-no-store: Chrome queues a frame's getUserMedia requests, so the second call's request only reaches the app after the first grant
+  # is delivered; with the store updated by the revoke the app would simply refuse it. Leaving the store alone isolates the wrapper's own
+  # handling of calls that are pending in the page when the stop arrives.
+  $common = @('--grant-n=1', '--revoke-after-grant-ms=500', '--delay-grant-ms=4000', '--revoke-no-store', '--stop-once')
+  Scenario 'P1. two calls pending: video only (V) and audio only (A); revoke AUDIO' "$base/livemulti?who=Cq&set=2" ($common + '--revoke-stop=audio')
+  Scenario 'P2. the same two calls; revoke VIDEO' "$base/livemulti?who=Cq&set=2" ($common + '--revoke-stop=video')
+  Scenario 'P3. three calls pending: V, A and audio+video (AV); revoke AUDIO' "$base/livemulti?who=Cq&set=3" ($common + '--revoke-stop=audio')
+  Scenario 'P4. the same three calls; revoke ALL' "$base/livemulti?who=Cq&set=3" ($common + '--revoke-stop=all')
+}
 Get-Process m0_spike -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
 Remove-Item revoke.out, revoke.err, $srvlog -ErrorAction SilentlyContinue

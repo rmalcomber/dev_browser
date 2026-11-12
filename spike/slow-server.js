@@ -51,6 +51,14 @@ mk('http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Cl3', 2200, 500);`
 var s = document.createElement('iframe'); s.allow = 'camera; microphone'; s.srcdoc = '<script>' + code + '<\\/script>'; s.style.cssText = 'width:300px;height:100px;border:0'; document.body.appendChild(s);
 var sb = document.createElement('iframe'); sb.sandbox = 'allow-scripts'; sb.allow = 'camera; microphone'; sb.src = '/livecam?who=Csb'; sb.style.cssText = 'width:300px;height:100px;border:0'; document.body.appendChild(sb);`, ''),
   '/nav-iframe': green("var to = 'http://127.0.0.1:' + (+location.port + 1) + '/livecam?who=Nb'; var f = document.createElement('iframe'); f.src = 'http://localhost:' + location.port + '/livecam?who=Na&navat=' + (q0.get('navat') || 2500) + '&navto=' + encodeURIComponent(to); f.allow = 'camera *; microphone *'; f.style.cssText = 'width:500px;height:250px;border:0'; document.body.appendChild(f);".replace('var to', 'var q0 = new URLSearchParams(location.search); var to'), ''),
+  '/livemulti': green(`var q = new URLSearchParams(location.search), who = q.get('who') || 'C';
+function rep(m){ fetch('/report?who=' + who + '&kind=multi&msg=' + encodeURIComponent(m)).catch(function(){}); }
+var all = [{ n: 'V', c: { video: true } }, { n: 'A', c: { audio: true } }, { n: 'AV', c: { audio: true, video: true } }];
+var calls = q.get('set') === '3' ? all : all.slice(0, 2);
+calls.forEach(function(k){ navigator.mediaDevices.getUserMedia(k.c).then(function(st){
+  function t(){ return st.getTracks().map(function(x){ return x.kind + '=' + x.readyState; }).join(' '); }
+  rep(k.n + ' granted: ' + t()); setInterval(function(){ rep(k.n + ' now: ' + t()); }, 1000);
+}, function(e){ rep(k.n + ' denied ' + e.name); }); });`, '<b>M</b>'),
   '/popped': green('', '<b>popup</b>'),
 };
 // /permcheck?kind=geo|notify|clipboard|camera&mode=request|query&who=C : reports the permission state before, asks for it

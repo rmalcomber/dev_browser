@@ -373,7 +373,11 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             let stop = arg("revoke-stop");
-            if stop == "audio" || stop == "video" {
+            // --revoke-no-store: send only the stop command and leave the store alone, so later requests are still answered "allowed" and the
+            // wrapper's own handling of pending calls is what decides the outcome
+            if flag("revoke-no-store") {
+                println!("[m0] store left untouched (wrapper-only revoke)");
+            } else if stop == "audio" || stop == "video" {
                 // revoke just one kind: keep the other in the store
                 let bit = if stop == "audio" { MEDIA_AUDIO } else { MEDIA_VIDEO };
                 let mut st = media_load("ws-c");
