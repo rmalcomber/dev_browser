@@ -78,6 +78,15 @@ native window from the tooling used, so anything visual or typed is marked **not
    returns `None` until `RequestContextHandler::on_request_context_initialized` has fired. Create the browser views from
    that callback (the spike builds its UI once every context is ready).
 
+### IME (not run, 2026-11-12)
+
+Not run: the test PC has only the English (UK) keyboard, so there is no input method editor to compose with, and adding one
+is a Windows system change that was left to Roy. When one exists (Chinese Pinyin or Japanese), the check is: switch to it
+for the spike window, type with real key input into the page input, the overlay input and the other pane, and confirm
+composition shows in place, the candidate window sits next to the caret (also at 150% and inside the moved overlay), commit
+lands in the right pane, `Escape` ends composition before closing the overlay, and `Ctrl+P` still opens the launcher mid-composition.
+Spec risk 2 and the accessibility item stay open until then.
+
 ### 150% scale (checked 2026-11-12, with a caveat)
 
 `spike/drive.ps1 -Scale 1.5 -AppFlags '--force-device-scale-factor=1.5' -SkipDivider` repeats the pane and `Ctrl+P` checks with
