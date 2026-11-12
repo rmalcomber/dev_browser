@@ -122,6 +122,34 @@ new content. Keep that behaviour (hide old first, neutral background) in the rea
 Still open: a view that is destroyed and recreated rather than created once; lazily restored tabs; switching while a view is
 mid-load; and sites that paint white themselves (their own white page is their content, not our flash).
 
+### Swap to a destroyed and recreated view (checked 2026-11-12)
+
+`Ctrl+6` destroys workspace C's browser and view (a discarded tab) but keeps its request context, so its session survives;
+`Ctrl+4` then recreates only the view. `flash.ps1 -Recreate` records 60 fps through: create C, back to split, destroy C while
+hidden, swap to C (view recreated), destroy C while it is on screen, then swap to C again. Five runs at 60 fps:
+
+| Transition | Frames in between | What they were |
+| --- | --- | --- |
+| First creation of C | 3 to 6 | dark |
+| Recreated while hidden, then swapped in | 0 to 2 (three of five runs had 1 or 2) | dark |
+| Visible view destroyed, app falls back to split | 0 | straight to the split view |
+| Recreated from split again | 0 or 1 | dark |
+
+No frame of the previous workspace's content appeared after any switch and no white frame appeared (the dark background from
+the previous section holds for recreated views). Recreating is no worse than first creation, and usually faster, because the
+request context is already initialised.
+
+Two real bugs found on the way, both in the spike's own handling and both worth designing for in the real app:
+
+1. **Closing one view's browser while it is still in the window closed the whole window**, every browser, then the app.
+   Detach the view from its parent first, then close its browser.
+2. **Destroying the focused, visible view left nothing to receive key events**: the window stayed blank and `Ctrl+4` did
+   nothing. When a visible workspace is discarded the app must pick another workspace and give a pane the focus.
+
+Not checked: destroying a view mid-load, many create/destroy cycles for leaks (memory, processes), a destroyed view's
+request context being released, and a one-off `mixed|G` state seen for the last 1.6 s of an earlier, pre-fix run that did not
+recur in the five clean runs (cause unknown; possibly the capture, not the app).
+
 ### Workspace outline and saved divider position (checked 2026-11-12)
 
 - **Outline.** Each pane sits in a wrapper panel whose background is the workspace accent colour (A amber, B violet), showing as

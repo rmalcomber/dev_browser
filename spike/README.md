@@ -37,3 +37,5 @@ window at 60 fps with ffmpeg while pressing it and `flash-analyze.js` reports an
 layout (`-Presses` and `-GapMs` set how many swaps and how fast). Needs ffmpeg and node on PATH.
 `Ctrl+4` creates workspace C on the spot and shows it alone; `flash.ps1 -Fresh` checks that swap (add `-AppFlags '--white-bg'` to see the white
 flash a new view shows with the default browser background).
+`Ctrl+6` destroys workspace C's view (keeping its context) and `Ctrl+4` recreates it; `flash.ps1 -Recreate` checks both, including destroying the
+view while it is on screen.

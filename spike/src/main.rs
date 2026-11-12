@@ -131,6 +131,12 @@ fn start_fresh_workspace() {
         relayout();
         return;
     }
+    // The view was destroyed earlier but its request context (the workspace's session) is kept: recreate only the view.
+    if ST.with(|s| s.borrow().fresh_ctx.is_some()) {
+        println!("[m0] recreating workspace C's view from its kept context");
+        create_fresh_view();
+        return;
+    }
     let root = std::env::current_dir().unwrap().join(".m0-data").join("chromium-root");
     let cache = root.join("ws-c");
     let _ = std::fs::create_dir_all(&cache);
@@ -138,6 +144,30 @@ fn start_fresh_workspace() {
     let mut h = SpikeRchFresh::new();
     let ctx = request_context_create_context(Some(&rcs), Some(&mut h)).expect("request context C");
     ST.with(|s| s.borrow_mut().fresh_ctx = Some(ctx));
+}
+
+// Destroys workspace C's browser and view (a discarded tab), keeping its request context.
+fn destroy_fresh_view() {
+    let (fresh, panel) = ST.with(|s| { let mut s = s.borrow_mut(); (s.fresh.take(), s.panel.clone()) });
+    let (Some((wrap, bv)), Some(panel)) = (fresh, panel) else { println!("[m0] no workspace C view to destroy"); return };
+    // Finding: closing a view's browser while it is still in the window closes the whole window (every browser, then the
+    // app). Detach the view first, then close its browser.
+    let mut wv = View::from(&wrap);
+    panel.remove_child_view(Some(&mut wv));
+    if let Some(h) = bv.browser().and_then(|b| b.host()) { h.close_browser(1); }
+    println!("[m0] workspace C view destroyed (context kept)");
+    // Finding: if the destroyed view was the one on screen (and focused), nothing was left to receive key events and the window
+    // stayed blank. Fall back to the split view and give a pane the focus, as the real app should when a workspace is discarded.
+    let (mode, wr, dv, panes, last) = ST.with(|s| { let mut s = s.borrow_mut(); let m = s.mode; if m == 3 { s.mode = 0; } s.last_layout = (0, 0, 0); (m, s.wrappers.clone(), s.divider_view.clone(), s.pane_views.clone(), s.last_pane) });
+    if mode == 3 {
+        for w in wr.iter() { w.set_visible(1); }
+        if let Some(d) = dv.as_ref() { d.set_visible(1); }
+        println!("[m0] mode: split (fell back from the destroyed workspace)");
+        relayout();
+        if let Some(p) = panes.get(last) { p.request_focus(); }
+    } else {
+        relayout();
+    }
 }
 
 fn create_fresh_view() {
@@ -312,6 +342,7 @@ wrap_keyboard_handler! {
             }
             if ctrl && e.windows_key_code == VK_3 && self.role != OVERLAY { cycle_mode(); return 1; }
             if ctrl && e.windows_key_code == VK_4 && self.role != OVERLAY { start_fresh_workspace(); return 1; }
+            if ctrl && e.windows_key_code == 0x36 && self.role != OVERLAY { destroy_fresh_view(); return 1; }
             if ctrl && (e.windows_key_code == VK_1 || e.windows_key_code == VK_2) && self.role != OVERLAY {
                 focus_pane(if e.windows_key_code == VK_1 { 0 } else { 1 });
                 return 1;
@@ -396,6 +427,7 @@ wrap_life_span_handler! {
                 if let Some(i) = s.browsers.iter().position(|x| x.is_same(Some(&mut b)) != 0) { s.browsers.remove(i); }
                 s.browsers.is_empty()
             });
+            println!("[m0] browser closed; {} left", ST.with(|s| s.borrow().browsers.len()));
             if empty {
                 println!("[m0] all browsers closed");
                 if let Some(w) = ST.with(|s| s.borrow().window.clone()) { w.close(); }
