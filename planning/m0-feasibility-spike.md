@@ -291,8 +291,34 @@ wrong state; (2) a request for both kinds is refused as a whole when one is deni
 (3) revoke needs UI (a per-origin list) and should also stop a stream already running, which this check did not do; (4) the file
 format here is only a stand-in and must live in the workspace database, never in a shared one.
 
-Not checked: granting a subset, revoking while a stream is live, microphone-only pages, screen and window capture (the desktop
-bits), the permission being asked from an iframe, expiry of decisions, and the real prompt UI.
+Not checked here: microphone-only pages, screen and window capture (the desktop bits), the permission being asked from an iframe,
+expiry of decisions, and the real prompt UI. Subset grants and live revokes are in the next section.
+
+### Subset grants and revoking a live stream (checked 2026-11-12)
+
+`spike/revoke.ps1`, again with fake capture devices (no real camera or microphone opened).
+
+**A. Granting a subset does not work; refuse instead.** The store allows the camera and denies the microphone, and the page asks for
+both. With `--grant-subset` the app grants only the camera (`cont(camera)`). The page did **not** get a video-only stream: it got
+`AbortError`, a different and less clear failure than the `NotAllowedError` a plain refusal gives. So keep the all-or-nothing rule from
+the previous section: grant only when every requested kind is allowed, otherwise `cancel()`, and let the page ask again for just the
+kind it wants. (With a real camera a subset grant might also switch the device on before aborting; not tried here.)
+
+**B. Revoking does not stop a stream that is already running.** A page held a live camera stream and reported its track state and
+frame count every second.
+
+| Case | What happened |
+| --- | --- |
+| Revoke at 4 s (store entry deleted), page left alone | `track=live` and the frame count kept climbing (19, 39, ... 159 over 8 s): the revoke had no effect on the running stream |
+| Revoke at 4 s, then the app reloads the page, and the user now denies | the old page's reports stop, the new page asks again (the store is empty, so the user is asked), and gets `NotAllowedError`: no stream |
+
+CEF has no call to stop capture for an existing stream, and a revoke only changes what the app will answer next time. So the real
+app's revoke action must end the stream itself: reload or navigate the page, or discard the view, and tell the user that is what
+will happen. A gentler option (not tried) is a small render-process extension that wraps `getUserMedia`, remembers the streams it
+handed out and stops their tracks on a command from the browser; that is more work and more attack surface in the page's process.
+
+Not checked: that wrapper, revoking from a settings page while the page is in another workspace (it would need a reload on
+activation), revoking only the microphone while the camera stays live, and a stream held by an iframe.
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 

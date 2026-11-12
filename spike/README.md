@@ -48,3 +48,4 @@ reports survival, processes and what the server saw (`-Routes`, `-AppFlags`, `-A
 the other panes' profiles. Needs node on PATH. The camera accept runs open a real webcam for a few seconds each; use `-Kinds geo,notify,clipboard` to avoid that.
 `mediastore.ps1` checks the app-owned camera/microphone decision store (ask, remember, destroy, restart, partial coverage, other workspace, revoke).
 It uses Chromium's fake capture devices, so no real camera or microphone is opened.
+`revoke.ps1` checks granting a subset of the requested media kinds and revoking while a stream is live (fake devices; no real camera or microphone).

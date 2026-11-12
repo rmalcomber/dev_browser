@@ -213,6 +213,8 @@ fn create_fresh_view() {
     wrap.set_visible(1);
     println!("[m0] workspace C view created and shown");
     // --auto-destroy-ms=N: destroy it from a timer too, for pages (alert dialogs) that swallow the key event
+    let rms: i64 = arg("auto-revoke-ms").parse().unwrap_or(0);
+    if rms > 0 { let mut t = AutoRevokeTask::new(); post_delayed_task(ThreadId::UI, Some(&mut t), rms); }
     let ms: i64 = arg("auto-destroy-ms").parse().unwrap_or(0);
     if ms > 0 { let mut t = AutoDestroyTask::new(); post_delayed_task(ThreadId::UI, Some(&mut t), ms); }
     relayout();
@@ -310,6 +312,27 @@ fn media_save(ws: &str, m: &std::collections::BTreeMap<String, (u32, u32)>) {
     let t: String = m.iter().map(|(o, (a, d))| format!("{o}\t{a}\t{d}\n")).collect();
     let _ = std::fs::write(f, t);
 }
+// Revoke: forget a workspace's stored media decisions. CEF has no call to stop a stream that is already running, so --revoke-reload
+// also reloads workspace C's page (which ends its streams); without it the live stream is left alone to show that it keeps running.
+static REVOKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn revoke_media(ws: &str) {
+    REVOKED.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = std::fs::remove_file(media_file(ws));
+    println!("[m0] media decisions revoked for {ws} (store file deleted)");
+}
+
+wrap_task! {
+    struct AutoRevokeTask {}
+    impl Task {
+        fn execute(&self) {
+            revoke_media("ws-c");
+            if flag("revoke-reload") {
+                if let Some((_, bv)) = ST.with(|s| s.borrow().fresh.clone()) { if let Some(b) = bv.browser() { b.reload(); println!("[m0] workspace C reloaded after the revoke"); } }
+            }
+        }
+    }
+}
+
 fn bits_name(b: u32) -> String { match (b & MEDIA_AUDIO != 0, b & MEDIA_VIDEO != 0) { (true, true) => "mic+camera".into(), (true, false) => "mic".into(), (false, true) => "camera".into(), _ => "none".into() } }
 
 fn state_file() -> std::path::PathBuf { std::env::current_dir().unwrap().join(".m0-data").join("divider.ratio") }
@@ -477,7 +500,9 @@ wrap_permission_handler! {
             1
         }
         fn on_request_media_access_permission(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, origin: Option<&CefString>, perms: u32, cb: Option<&mut MediaAccessCallback>) -> i32 {
-            let answer = arg("answer-permissions");
+            let mut answer = arg("answer-permissions");
+            // --answer-after-revoke: the simulated user changes their mind once a revoke has happened
+            if REVOKED.load(std::sync::atomic::Ordering::SeqCst) { let a = arg("answer-after-revoke"); if !a.is_empty() { answer = a; } }
             let o = origin.map(|o| o.to_string()).unwrap_or_default();
             if flag("media-store") {
                 let ws = ws_name(self.role);
@@ -497,7 +522,7 @@ wrap_permission_handler! {
                 }
                 let grant = requested & allowed;
                 if let Some(cb) = cb.as_ref() {
-                    if grant != 0 && grant == requested { cb.cont(grant); println!("[m0]   -> granted {}", bits_name(grant)); }
+                    if grant != 0 && (grant == requested || flag("grant-subset")) { cb.cont(grant); println!("[m0]   -> granted {}{}", bits_name(grant), if grant != requested { " (a subset of what was asked)" } else { "" }); }
                     else { cb.cancel(); println!("[m0]   -> refused (granted would be {})", bits_name(grant)); }
                 }
                 return 1;
