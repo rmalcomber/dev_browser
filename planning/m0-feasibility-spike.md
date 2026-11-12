@@ -146,9 +146,32 @@ Two real bugs found on the way, both in the spike's own handling and both worth 
 2. **Destroying the focused, visible view left nothing to receive key events**: the window stayed blank and `Ctrl+4` did
    nothing. When a visible workspace is discarded the app must pick another workspace and give a pane the focus.
 
-Not checked: destroying a view mid-load, many create/destroy cycles for leaks (memory, processes), a destroyed view's
+Not checked here (done in the next section: mid-load destroys and create/destroy cycles for leaks): a destroyed view's
 request context being released, and a one-off `mixed|G` state seen for the last 1.6 s of an earlier, pre-fix run that did not
 recur in the five clean runs (cause unknown; possibly the capture, not the app).
+
+### Destroying a view mid-load, and leaks (checked 2026-11-12)
+
+`spike/midload.ps1` runs a local page server (`slow-server.js`) that answers after 3 s, points workspace C at it, and destroys C's view
+700 ms into the load; then recreates it and lets it finish; then does destroy/recreate pairs only 120 ms apart. It records 60 fps and
+logs what the server saw.
+
+- **App survived** every case: no panic, no hang, no stuck window; the browser list returned to four after each destroy.
+- **The load is cancelled.** The server logged each in-flight request as `aborted (client went away before the response)`
+  about 0.6 s after the destroy, including the two 120 ms pairs, and only the loads that were allowed to finish were `sent`. The
+  favicon requests were aborted too.
+- **The kept context still works.** After a mid-load destroy, recreating C loaded the page normally (server: `sent`, frames:
+  dark for the 3 s load, then green).
+- **Frames:** the sequence was split, dark while C loads, split again after the destroy (straight from dark to the split view,
+  no stale or white frame), dark while the recreated C loads, green when the page arrives. Only red|blue, dark and green|green
+  states appeared. The dark period lasts as long as the load, so the real app needs a loading state there.
+- **No leak in 16 create/destroy cycles:** the process count was 9 at rest and 10 only while C existed, back to 9 after every
+  destroy (it counts the browser, GPU, network and renderer processes), and 0 after closing the app. Total private memory went
+  251 MB (split view), 268 MB after the first destroy, then 273 MB after 15 more cycles and 274 MB at the end: flat to within
+  a few MB, so no growth per cycle that this measure can see.
+
+Not checked: a destroy while a page is running script or holding a connection open (websocket, download, media), a destroy of
+a view that has an open popup or permission prompt, and memory with real sites (the pages here are tiny).
 
 ### Workspace outline and saved divider position (checked 2026-11-12)
 

@@ -39,3 +39,5 @@ layout (`-Presses` and `-GapMs` set how many swaps and how fast). Needs ffmpeg a
 flash a new view shows with the default browser background).
 `Ctrl+6` destroys workspace C's view (keeping its context) and `Ctrl+4` recreates it; `flash.ps1 -Recreate` checks both, including destroying the
 view while it is on screen.
+`midload.ps1` destroys workspace C's view while its page is still loading (`slow-server.js` answers after 3 s) and checks the app survives,
+the request is aborted, the frames are clean and no processes leak. Needs node and ffmpeg on PATH.
