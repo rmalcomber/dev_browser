@@ -9,6 +9,7 @@ into `docs/src/content/docs/` (docs first), and non-obvious choices are recorded
 | --- | --- |
 | [home-screen-browser-spec.md](home-screen-browser-spec.md) | Source spec, Draft v0.1 (12 Nov 2026). Left as received; changes go in the files below. |
 | [roadmap-and-milestones.md](roadmap-and-milestones.md) | M0 to M4 as checklists with exit criteria, plus the post-v1 list. |
+| [m1-plan.md](m1-plan.md) | The M1 build plan: decisions to settle, repository layout, slices M1.0 to M1.7, and the first tasks. Draft. |
 | [m0-feasibility-spike.md](m0-feasibility-spike.md) | The Chromium feasibility spike as a concrete test plan. First thing to build. |
 | [open-questions.md](open-questions.md) | Risks and unknowns from spec section 12, with next steps and who decides. |
 | [security-acceptance-tests.md](security-acceptance-tests.md) | Spec section 7.2 as a test matrix to automate. |

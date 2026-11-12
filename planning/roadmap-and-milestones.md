@@ -19,6 +19,8 @@ Left over from M0 (see the spike notes): IME, real OS-level DPI, a real two-work
 
 ## M1: Browser and workspace foundation
 
+Plan: [m1-plan.md](m1-plan.md) (draft).
+
 - [ ] Workspace manager; global and per-workspace SQLite with migrations.
 - [ ] Persistent Chromium context per workspace.
 - [ ] Vertical sidebar: workspaces, groups, tabs; chevron vs name click semantics.
