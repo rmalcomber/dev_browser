@@ -486,6 +486,7 @@ fn build_ui() {
     let root = std::env::current_dir().unwrap().join(".m0-data").join("chromium-root");
     let urls = [arg("url-a"), arg("url-b")];
     let mut ctxs = ST.with(|s| s.borrow().ctxs.clone());
+    if flag("sharectx") { let c = ctxs[0].clone(); ctxs.push(c); }
     let mut panes = vec![];
     for (i, ctx) in ctxs.iter_mut().enumerate() {
         let role = i as u8;
@@ -521,14 +522,15 @@ wrap_browser_process_handler! {
     impl BrowserProcessHandler {
         fn on_context_initialized(&self) {
             let root = std::env::current_dir().unwrap().join(".m0-data").join("chromium-root");
-            let n = if flag("single") { 1 } else { 2 };
+            let n = if flag("single") || flag("sharectx") { 1 } else { 2 };
             let mut ctxs = vec![];
             for ws in ["ws-a", "ws-b"].into_iter().take(n) {
                 // Test 4: one request context per workspace, distinct cache_path directly under the root.
                 // CEF compares these as strings against its user data dir: use the same (backslash) form as root_cache_path.
                 let cache = root.join(ws);
                 std::fs::create_dir_all(&cache).unwrap();
-                let rcs = RequestContextSettings { cache_path: CefString::from(cache.to_string_lossy().as_ref()), persist_session_cookies: 1, ..Default::default() };
+                let cp = if flag("mem-b") && ws == "ws-b" { String::new() } else { cache.to_string_lossy().to_string() };
+                let rcs = RequestContextSettings { cache_path: CefString::from(cp.as_str()), persist_session_cookies: 1, ..Default::default() };
                 let mut h = SpikeRch::new(ws.to_string());
                 ctxs.push(request_context_create_context(Some(&rcs), Some(&mut h)).expect("request context"));
             }
@@ -544,6 +546,15 @@ wrap_app! {
     struct SpikeApp {}
     impl App {
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> { Some(SpikeBph::new()) }
+        // Finding: with two or more content browser views in one window the GPU process crashed three times at startup
+        // (exit code 0x80000003, then it settled) on this machine. Turning DirectComposition off avoids it.
+        fn on_before_command_line_processing(&self, process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
+            let Some(cl) = command_line else { return };
+            let browser_process = process_type.map(|p| p.to_string().is_empty()).unwrap_or(true);
+            if browser_process && cl.has_switch(Some(&CefString::from("keep-dcomp"))) != 1 {
+                cl.append_switch(Some(&CefString::from("disable-direct-composition")));
+            }
+        }
     }
 }
 

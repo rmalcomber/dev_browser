@@ -16,7 +16,7 @@ limit (`.with_config().limit(256 * 1024 * 1024)` before `read_json()`) and run `
 ./run.ps1 --selftest-write           # pane A writes a localStorage marker (test 4 probe)
 ```
 
-Flags: `--url-a= --url-b= --single --chrome --noov --nodiv --selftest-write --exit-after=SECS`. Alloy style is the default (it is the one that
+Flags: `--url-a= --url-b= --single --chrome --noov --nodiv --keep-dcomp --sharectx --mem-b --selftest-write --exit-after=SECS`. Alloy style is the default (it is the one that
 supports several browser views in one window); `--chrome` selects Chrome style. Output lines start with `[m0]`.
 `cwd` matters: Chromium data goes in `.m0-data/` under the current directory (git-ignored).
 

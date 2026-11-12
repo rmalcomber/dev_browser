@@ -91,9 +91,19 @@ clicks on X. Screenshots of the spike's own window (`spike/shot.ps1`, `spike/fli
 - **Two clicks to close.** Each browser answers `try_close_browser` with "not yet" the first time and CEF retries the
   window close for only one of them. The spike now retries the window close itself every 150 ms until all agree; one click
   on X closes it (checked with a real mouse click). This also fixed the earlier Alloy hang on exit.
-- **GPU process crashes at startup.** The log shows the GPU process exiting unexpectedly three times in the first second
-  (exit code 0x80000003) before settling. It is not the cause of the blank pane: with `--disable-gpu` there were no crashes and the pane was still blank.
-  Worth understanding before relying on it.
+- **GPU process crashes at startup (investigated).** The log showed the GPU process exiting unexpectedly three times in
+  the first second (exit code 0x80000003, a debug-break), then running on the fourth start. Findings, each from runs
+  counting the "GPU process exited" log lines:
+  - It needs two or more content browser views in the window: one pane (with or without the overlay) never crashes; two
+    panes crash with or without the divider or overlay, with one shared profile or two, and in Chrome style too.
+  - It goes away with `--disable-direct-composition`, `--disable-gpu-compositing`, `--use-angle=swiftshader`, `--use-angle=gl`
+    or `--in-process-gpu`; it stays with the default, `--use-angle=d3d11`, `--disable-gpu-sandbox` and
+    `--disable-features=DirectComposition`. So it is in the D3D11 plus DirectComposition path with several child windows.
+  - **Workaround in the spike:** `--disable-direct-composition` (set in `on_before_command_line_processing`, opt out with
+    `--keep-dcomp`). Crashes 3 to 0, ANGLE D3D11 still initialises, and the screenshot series is steady from the first frame
+    (before the fix it changed once about two seconds in). Not found: the root cause (the crash prints nothing and no dump
+    is written), whether it depends on this machine (NVIDIA, two displays, one at a negative x), or what the flag costs.
+  - To do before relying on it: try another machine or GPU, and measure the cost of no DirectComposition (power, tearing).
 - **Lesson:** log lines said "pass" while the screen was wrong. Keep the screenshot check (`flicker.ps1`) in the loop.
 
 ### Findings worth keeping
