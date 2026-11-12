@@ -46,3 +46,5 @@ reports survival, processes and what the server saw (`-Routes`, `-AppFlags`, `-A
 `busy.ps1 -Routes geo,notify,clipboard,camera` (with `-AppFlags '--own-permissions'` and optionally `--drop-permission`) destroys the view with a permission prompt open.
 `permanswer.ps1` has the app accept or deny each permission and checks the decision survives destroy/recreate and restart, and does not leak to
 the other panes' profiles. Needs node on PATH. The camera accept runs open a real webcam for a few seconds each; use `-Kinds geo,notify,clipboard` to avoid that.
+`mediastore.ps1` checks the app-owned camera/microphone decision store (ask, remember, destroy, restart, partial coverage, other workspace, revoke).
+It uses Chromium's fake capture devices, so no real camera or microphone is opened.

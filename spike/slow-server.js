@@ -26,13 +26,14 @@ const pages = {
 const permPage = green(`
 var q = new URLSearchParams(location.search), kind = q.get('kind'), mode = q.get('mode') || 'request', who = q.get('who') || 'C';
 function rep(m) { fetch('/report?who=' + who + '&kind=' + kind + '&msg=' + encodeURIComponent(m)).catch(function(){}); }
-var names = { geo: 'geolocation', notify: 'notifications', clipboard: 'clipboard-read', camera: 'camera' };
+var names = { geo: 'geolocation', notify: 'notifications', clipboard: 'clipboard-read', camera: 'camera', mic: 'microphone', cammic: 'camera' };
 function state() { return navigator.permissions.query({ name: names[kind] }).then(function(s){ return s.state; }, function(e){ return 'query-failed:' + e.name; }); }
 function ask() {
   if (kind === 'geo') return new Promise(function(r){ navigator.geolocation.getCurrentPosition(function(){ r('position'); }, function(e){ r('error code ' + e.code); }); });
   if (kind === 'notify') return Notification.requestPermission();
   if (kind === 'clipboard') return navigator.clipboard.readText().then(function(){ return 'read ok'; }, function(e){ return e.name; });
-  return navigator.mediaDevices.getUserMedia({ video: true }).then(function(){ return 'stream'; }, function(e){ return e.name; });
+  var c = kind === 'mic' ? { audio: true } : kind === 'cammic' ? { video: true, audio: true } : { video: true };
+  return navigator.mediaDevices.getUserMedia(c).then(function(st){ var n = st.getTracks().map(function(t){ return t.kind + ' [' + t.label + ']'; }).join(' + '); st.getTracks().forEach(function(t){ t.stop(); }); return 'stream(' + n + ')'; }, function(e){ return e.name; });
 }
 state().then(function(b){ rep('state-before=' + b); if (mode === 'query') return; return ask().then(function(r){ rep('outcome=' + r); return state().then(function(a){ rep('state-after=' + a); }); }); });
 `, '<b>?</b>');

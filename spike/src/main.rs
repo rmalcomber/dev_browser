@@ -291,6 +291,27 @@ fn update_outline() {
     println!("[m0] outline: focused pane {} full accent, other dimmed", focused + 1);
 }
 
+// ---- app-owned media permission store (camera and microphone): CEF does not remember these, so the app does ----
+// One small file per workspace: "origin<TAB>allowed_bits<TAB>denied_bits" per line. A stand-in for the workspace's own database.
+const MEDIA_AUDIO: u32 = 1;
+const MEDIA_VIDEO: u32 = 2;
+fn ws_name(role: u8) -> &'static str { match role { PANE_A => "ws-a", PANE_B => "ws-b", _ => "ws-c" } }
+fn media_file(ws: &str) -> std::path::PathBuf { std::env::current_dir().unwrap().join(".m0-data").join("workspaces").join(ws).join("media-permissions.txt") }
+fn media_load(ws: &str) -> std::collections::BTreeMap<String, (u32, u32)> {
+    let mut m = std::collections::BTreeMap::new();
+    if let Ok(t) = std::fs::read_to_string(media_file(ws)) {
+        for l in t.lines() { let p: Vec<&str> = l.split('\t').collect(); if p.len() == 3 { if let (Ok(a), Ok(d)) = (p[1].parse(), p[2].parse()) { m.insert(p[0].to_string(), (a, d)); } } }
+    }
+    m
+}
+fn media_save(ws: &str, m: &std::collections::BTreeMap<String, (u32, u32)>) {
+    let f = media_file(ws);
+    let _ = std::fs::create_dir_all(f.parent().unwrap());
+    let t: String = m.iter().map(|(o, (a, d))| format!("{o}\t{a}\t{d}\n")).collect();
+    let _ = std::fs::write(f, t);
+}
+fn bits_name(b: u32) -> String { match (b & MEDIA_AUDIO != 0, b & MEDIA_VIDEO != 0) { (true, true) => "mic+camera".into(), (true, false) => "mic".into(), (false, true) => "camera".into(), _ => "none".into() } }
+
 fn state_file() -> std::path::PathBuf { std::env::current_dir().unwrap().join(".m0-data").join("divider.ratio") }
 fn load_ratio() -> Option<f32> {
     let r: f32 = std::fs::read_to_string(state_file()).ok()?.trim().parse().ok()?;
@@ -440,7 +461,7 @@ wrap_jsdialog_handler! {
 // Permission prompts (geolocation, notifications, clipboard, camera and microphone). With --own-permissions the app takes every
 // prompt and keeps its callback pending, as a browser-owned prompt UI would; without it CEF does what it does by default.
 wrap_permission_handler! {
-    struct SpikePerms {}
+    struct SpikePerms { role: u8 }
     impl PermissionHandler {
         fn on_show_permission_prompt(&self, _b: Option<&mut Browser>, id: u64, origin: Option<&CefString>, perms: u32, cb: Option<&mut PermissionPromptCallback>) -> i32 {
             let answer = arg("answer-permissions");
@@ -458,6 +479,29 @@ wrap_permission_handler! {
         fn on_request_media_access_permission(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, origin: Option<&CefString>, perms: u32, cb: Option<&mut MediaAccessCallback>) -> i32 {
             let answer = arg("answer-permissions");
             let o = origin.map(|o| o.to_string()).unwrap_or_default();
+            if flag("media-store") {
+                let ws = ws_name(self.role);
+                let mut store = media_load(ws);
+                let (allowed, denied) = store.get(&o).copied().unwrap_or((0, 0));
+                let requested = perms & (MEDIA_AUDIO | MEDIA_VIDEO);
+                let undecided = requested & !(allowed | denied);
+                let (mut allowed, mut denied) = (allowed, denied);
+                if undecided == 0 {
+                    println!("[m0] media request from {o} in {ws}: {} answered from the store (allowed {}, denied {})", bits_name(requested), bits_name(allowed & requested), bits_name(denied & requested));
+                } else {
+                    // ask the user (simulated by --answer-permissions) about the undecided kinds only, and remember the answer
+                    if answer == "accept" { allowed |= undecided; } else { denied |= undecided; }
+                    println!("[m0] media request from {o} in {ws}: {} not decided, asked the user, answer {} -> remembered", bits_name(undecided), if answer.is_empty() { "deny (no answer given)" } else { &answer });
+                    store.insert(o.clone(), (allowed, denied));
+                    media_save(ws, &store);
+                }
+                let grant = requested & allowed;
+                if let Some(cb) = cb.as_ref() {
+                    if grant != 0 && grant == requested { cb.cont(grant); println!("[m0]   -> granted {}", bits_name(grant)); }
+                    else { cb.cancel(); println!("[m0]   -> refused (granted would be {})", bits_name(grant)); }
+                }
+                return 1;
+            }
             if let (Some(cb), true) = (cb.as_ref(), !answer.is_empty()) {
                 println!("[m0] media permission request from {o} (bits 0x{perms:x}) answered by the app: {answer}");
                 if answer == "accept" { cb.cont(perms); } else { cb.cancel(); }
@@ -535,7 +579,7 @@ wrap_client! {
         fn display_handler(&self) -> Option<DisplayHandler> { Some(SpikeDisplay::new(self.role)) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(SpikeLoad::new(self.role)) }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(SpikeLife::new()) }
-        fn permission_handler(&self) -> Option<PermissionHandler> { if flag("own-permissions") || !arg("answer-permissions").is_empty() { Some(SpikePerms::new()) } else { None } }
+        fn permission_handler(&self) -> Option<PermissionHandler> { if flag("own-permissions") || flag("media-store") || !arg("answer-permissions").is_empty() { Some(SpikePerms::new(self.role)) } else { None } }
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { if flag("native-dialogs") { None } else { Some(SpikeDialogs::new(self.role)) } }
     }
 }
@@ -762,6 +806,8 @@ wrap_request_context_handler! {
 }
 
 fn build_ui() {
+    let clear = arg("clear-media-store");
+    if !clear.is_empty() { for ws in clear.split(',') { let _ = std::fs::remove_file(media_file(ws)); println!("[m0] media store cleared for {ws}"); } }
     if let Some(r) = load_ratio() { ST.with(|s| s.borrow_mut().ratio = r); println!("[m0] divider position loaded: {r:.4}"); } else { println!("[m0] no saved divider position; using 0.5"); }
     let root = std::env::current_dir().unwrap().join(".m0-data").join("chromium-root");
     let urls = [arg("url-a"), arg("url-b")];

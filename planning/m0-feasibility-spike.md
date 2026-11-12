@@ -267,6 +267,33 @@ Not checked: the revoke path (changing a stored decision), per-origin lists in a
 these four (MIDI, sensors, payment, storage access), prompts from iframes (permissions policy), a permission asked while another
 workspace is on screen, microphone alone, and what the UI should say for a permission the OS itself blocks.
 
+### An app-owned store for camera and microphone decisions (checked 2026-11-12)
+
+CEF does not remember camera and microphone answers (previous section), so the spike keeps its own: one small file per workspace
+(`.m0-data/workspaces/<ws>/media-permissions.txt`, a stand-in for the workspace's database) with `origin, allowed bits, denied bits`.
+On a media request the app looks up the origin in the asking workspace's store, asks only about the kinds not yet decided (the
+"user" is `--answer-permissions`), remembers the answer, and answers CEF: grant when every requested kind is allowed, otherwise
+cancel. `spike/mediastore.ps1` uses Chromium's fake capture devices (`--use-fake-device-for-media-stream`; the page sees
+`fake_device_0`), so **no real camera or microphone was opened** in these runs.
+
+| Step | What the app did | Page got |
+| --- | --- | --- |
+| 1. first visit, C and pane B (same origin, other workspace) both ask for the camera | asked the user twice (once per workspace), accepted, stored in `ws-c` and `ws-b` separately | a stream each |
+| 2. C's view destroyed and recreated | answered from the store, no question | a stream |
+| 3. restart, the user would now deny | answered from the store: the store wins | a stream, in both C and B |
+| 4. C asks camera plus microphone | camera from the store, asked only about the microphone, the user denied it, remembered (`allowed 2, denied 1`) | `NotAllowedError` (all or nothing) |
+| 5. revoke: `ws-c`'s store cleared at start-up | asked again, this time denied (`0, 2`); `ws-b` untouched and still answered from its own store | `NotAllowedError` in C, a stream in B |
+
+So the pattern works: decisions are per workspace and origin, survive destroy and restart, partial coverage asks only about the
+new kind, and a revoke is just deleting an entry. Things to carry into the real app: (1) the page's own `permissions.query` still says
+`prompt` after a grant because CEF does not know about the store, so a site that checks the Permissions API before asking sees the
+wrong state; (2) a request for both kinds is refused as a whole when one is denied (this run did not try granting a subset);
+(3) revoke needs UI (a per-origin list) and should also stop a stream already running, which this check did not do; (4) the file
+format here is only a stand-in and must live in the workspace database, never in a shared one.
+
+Not checked: granting a subset, revoking while a stream is live, microphone-only pages, screen and window capture (the desktop
+bits), the permission being asked from an iframe, expiry of decisions, and the real prompt UI.
+
 ### Workspace outline and saved divider position (checked 2026-11-12)
 
 - **Outline.** Each pane sits in a wrapper panel whose background is the workspace accent colour (A amber, B violet), showing as
