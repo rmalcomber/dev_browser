@@ -7,7 +7,7 @@ Keep this file short. If a rule matters, it goes here; if it is detail, it goes 
 The Dev Browser is a personal, developer-oriented desktop browser written in Rust, rendering with embedded Chromium (CEF),
 with the Home Screen launcher and tools built in. Its core ideas: vertical tabs grouped by **workspace** (each with its own
 isolated login session and data), a browser-owned `Ctrl+P` launcher, a right-hand widget panel, and two-pane split view.
-Status: the M0 feasibility spike is done and deleted (direct CEF through cef-rs, Alloy-style views; see `planning/m0-feasibility-spike.md`). M1 is under way (`planning/m1-plan.md`): the Cargo workspace, `core` storage, the CEF host (one window, trusted shell from `app://shell`, a page), IPC v0, the S6 hostile-page check and the `tools/` scripts exist. M1.2 (workspaces and storage), M1.3 (tabs, the command registry, window-level shortcuts) and M1.4 (the sidebar tree, groups, the accent frame; S8 and S11) and M1.5 (navigation chrome, search-or-address entry, favicons, open across workspaces; S10) and M1.6 (safety nets: error pages, certificate errors, popups, notices, downloads; S12 minimal) are done. Next is M1.7, restore, the exit test and hardening. Nothing is released.
+Status: the M0 feasibility spike is done and deleted (direct CEF through cef-rs, Alloy-style views; see `planning/m0-feasibility-spike.md`). M1 is under way (`planning/m1-plan.md`): the Cargo workspace, `core` storage, the CEF host (one window, trusted shell from `app://shell`, a page), IPC v0, the S6 hostile-page check and the `tools/` scripts exist. M1.2 (workspaces and storage), M1.3 (tabs, the command registry, window-level shortcuts) and M1.4 (the sidebar tree, groups, the accent frame; S8 and S11) and M1.5 (navigation chrome, search-or-address entry, favicons, open across workspaces; S10) and M1.6 (safety nets: error pages, certificate errors, popups, notices, downloads; S12 minimal) are done. M1.7 (window state, restore after a kill, a soak) is built; the hand exit test (`planning/m1-exit-test.md`), a long soak and the `0.2.0-alpha` tag are still open. Nothing is released.
 
 Start with `planning/README.md`, then `planning/home-screen-browser-spec.md` (the source spec) and
 `planning/roadmap-and-milestones.md`.
@@ -23,6 +23,8 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 | Check (fmt, clippy, tests, ui build) | `tools\build.ps1 check` |
 | Build | `tools\build.ps1 build` |
 | Security check S6 (hostile page; needs a build and node) | `tools\s6-hostile-page.ps1` |
+| M1.7 checks: restore after a clean close and a kill, window size, logins kept separate (about 3 minutes) | `toolsm17-restore.ps1` |
+| Soak: open tabs churned for `-Minutes`, process and memory bound (needs the keyboard) | `toolssoak.ps1 -Minutes 12` |
 | M1.6 checks: closing risky pages (dialogs, permissions, a busy loop), popups, error pages, S12, downloads, a crashed renderer (about 3 minutes, takes over mouse and keyboard; needs node and openssl) | `tools\m16-safety.ps1` |
 | M1.5 checks: address bar, back/forward/reload/stop, favicon, S10 across workspaces (about 2 minutes, takes over mouse and keyboard; typing assumes a US layout) | `tools\m15-navigation.ps1` |
 | M1.4 checks: sidebar tree, accent frame, recolour (about 40 seconds, takes over mouse and keyboard) | `tools\m14-sidebar.ps1` |

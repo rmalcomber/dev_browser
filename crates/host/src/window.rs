@@ -5,6 +5,7 @@ use crate::{
     layout, pages, shell, state,
 };
 use cef::*;
+use dev_browser_core::settings::WindowState;
 
 /// Create the shell view and the window. Workspace pages are added later by `pages` (the first one when the window exists).
 pub fn open() {
@@ -31,7 +32,10 @@ pub fn open() {
 wrap_window_delegate! {
     struct Frame {}
     impl ViewDelegate {
-        fn preferred_size(&self, _v: Option<&mut View>) -> Size { Size { width: 1200, height: 720 } }
+        fn preferred_size(&self, _v: Option<&mut View>) -> Size {
+            let w = state::with(|s| s.backend.as_ref().map(|b| b.window_state())).unwrap_or(WindowState::DEFAULT);
+            Size { width: w.width, height: w.height }
+        }
     }
     impl PanelDelegate {}
     impl WindowDelegate {
@@ -49,6 +53,7 @@ wrap_window_delegate! {
             window.set_title(Some(&CefString::from("The Dev Browser")));
             state::with(|s| { s.panel = Some(panel); s.window = Some(window.clone()); });
             window.show();
+            if state::with(|s| s.backend.as_ref().is_some_and(|b| b.window_state().maximized)) { window.maximize(); }
             layout::changed();
             // The first layout pass can come before the panel has its final size; look again shortly.
             let mut again = Relayout::new();
@@ -67,6 +72,7 @@ wrap_window_delegate! {
         // needed a second click on X in M0. So retry here until every browser agrees.
         fn can_close(&self, _w: Option<&mut Window>) -> i32 {
             // from here on browsers going away are the window closing, not tabs being closed
+            if let Some(w) = _w { save_window_state(w); }
             let browsers = state::with(|s| { s.shutting_down = true; s.browsers.clone() });
             let mut all = 1;
             for b in browsers { if let Some(h) = b.host() { if h.try_close_browser() != 1 { all = 0; } } }
@@ -84,4 +90,24 @@ wrap_task! {
 wrap_task! {
     struct RetryClose {}
     impl Task { fn execute(&self) { if let Some(w) = state::with(|s| s.window.clone()) { w.close(); } } }
+}
+
+/// Remember the window's size (and whether it is maximised) for the next start. A maximised window keeps the size it had when it was
+/// not, so un-maximising later gives a sensible window. Saved at every close attempt, which happens once per real close.
+fn save_window_state(w: &mut Window) {
+    let maximized = w.is_maximized() != 0;
+    let saved = state::with(|s| s.backend.as_ref().map(|b| b.window_state()));
+    let Some(saved) = saved else { return };
+    let size = w.size();
+    let next = if maximized {
+        WindowState::new(saved.width, saved.height, true)
+    } else {
+        WindowState::new(size.width, size.height, false)
+    };
+    state::with(|s| {
+        if let Some(b) = s.backend.as_ref() {
+            b.set_window_state(next)
+        }
+    });
+    println!("[host] window state saved: {}", next.format());
 }

@@ -365,6 +365,17 @@ impl Backend {
         })
     }
 
+    /// The window size and maximised state saved at the last close.
+    pub fn window_state(&self) -> settings::WindowState {
+        settings::window_state(&self.global)
+    }
+
+    pub fn set_window_state(&self, state: settings::WindowState) {
+        if let Err(e) = settings::set(&self.global, settings::WINDOW, &state.format()) {
+            eprintln!("[core] could not save the window state: {e}");
+        }
+    }
+
     pub fn data(&self) -> &DataDir {
         &self.data
     }

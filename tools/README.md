@@ -33,6 +33,8 @@ unlocked interactive desktop: **leave the mouse and keyboard alone while one run
 | Script | What it does |
 | --- | --- |
 | `s6-hostile-page.ps1` | S6: a hostile page cannot see `window.m0` or reach `app://shell`. Needs node. Exit code 0 = pass. |
+| `m17-restore.ps1` | M1.7 checks: the window size comes back after a clean close; after the app is killed, tabs, the selected tab and each workspace's separate login are back. About 3 minutes; needs node. |
+| `soak.ps1 -Minutes N` | Opens tabs in two workspaces and churns them for N minutes, sampling processes and memory once a minute; fails above 22 processes or 40% growth. Needs 8+ minutes to judge growth. |
 | `m16-safety.ps1` | M1.6 checks: eight kinds of risky page closed while active (dialogs, permission prompts, `beforeunload`, an endless loop), popups, an error page and Reload, S12 (self-signed https; no request reaches the server), downloads (Save, Cancel, no overwrite) and killed renderer processes. About 3 minutes; needs node and openssl. |
 | `m15-navigation.ps1` | M1.5 checks: typing an address and a search, a link click, Back, Forward, Reload, `javascript:` refused, Stop on a slow load (with a control), the page icon, browsing in a second workspace, and S10 in both directions. About 2 minutes; needs node. |
 | `m14-sidebar.ps1` | M1.4 checks: every page framed in its workspace colour (sampled from a screenshot), the frame follows switches and recolouring, the chevron expands without switching, clicking another workspace's tab switches to it, the group shortcuts run. Needs node. |

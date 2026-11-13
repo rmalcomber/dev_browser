@@ -151,6 +151,10 @@ real accounts; the S6, S8, S10, S11 and S12 checks run together; a short soak (h
 updated; a tagged `0.2.0-alpha`.
 **Done when:** the exit test passes on Roy's machine and the soak shows no growth in processes or memory beyond a stated bound.
 
+**Status: built 2026-11-13, two gates open** (see the M1.7 entry in `docs/ai/decisions.md`). Window size and maximised state persist; restore after a kill is
+checked (`toolsm17-restore.ps1`); a 12-minute soak is flat (`toolssoak.ps1`: 14 processes, +0.4% memory). **Open:** the hand exit test on real accounts
+(`planning/m1-exit-test.md`), a multi-hour soak, and the `0.2.0-alpha` tag, which waits for Roy.
+
 ## 6. What the spike taught us, and where it lands
 
 | Finding from M0 | Where it goes |
