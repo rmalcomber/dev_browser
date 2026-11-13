@@ -14,6 +14,8 @@ pub const WIDGETS_UNPIN: &str = "widgets.unpin";
 pub const WIDGETS_COLLAPSE: &str = "widgets.collapse";
 pub const WIDGET_RUN: &str = "widget.run";
 pub const PANEL_RESIZE: &str = "panel.resize";
+pub const WIDGETS_MOVE: &str = "widgets.move";
+pub const PANEL_FOLD: &str = "panel.fold";
 
 pub const PANEL_MIN: i32 = 220;
 pub const PANEL_MAX: i32 = 640;
@@ -50,6 +52,19 @@ pub(super) struct WidgetRunIn {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct WidgetMoveIn {
+    pub(super) id: i64,
+    pub(super) delta: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FoldIn {
+    pub(super) folded: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ResizeIn {
     pub(super) dx: i32,
     pub(super) done: bool,
@@ -69,6 +84,7 @@ struct WidgetOut {
 #[derive(Serialize)]
 struct SectionOut {
     workspace: WorkspaceOut,
+    folded: bool,
     widgets: Vec<WidgetOut>,
 }
 
@@ -116,6 +132,9 @@ impl Backend {
             self.with_home(&ws, |c| Ok(widget::all(c)?)),
         ) {
             (Ok(w), Ok(list)) => vec![SectionOut {
+                folded: self
+                    .with_home(&ws, |c| Ok(widget::section_folded(c)))
+                    .unwrap_or(false),
                 workspace: WorkspaceOut {
                     id: w.id.to_string(),
                     name: w.name,
@@ -185,6 +204,28 @@ impl Backend {
         if !removed {
             return Err("there is no such widget".into());
         }
+        Ok(Outcome {
+            replies: vec![self.widgets_reply()],
+            effects: vec![],
+        })
+    }
+
+    /// Move a pinned tool one place up or down in the active workspace.
+    pub(super) fn widgets_move(&mut self, id: i64, delta: i32) -> Result<Outcome, Failure> {
+        let ws = self.active.clone();
+        self.with_home(&ws, |c| {
+            widget::move_by(c, id, delta).map_err(tab::TabError::Message)
+        })?;
+        Ok(Outcome {
+            replies: vec![self.widgets_reply()],
+            effects: vec![],
+        })
+    }
+
+    /// Fold or unfold the active workspace's section of the panel (remembered).
+    pub(super) fn panel_fold(&mut self, folded: bool) -> Result<Outcome, Failure> {
+        let ws = self.active.clone();
+        self.with_home(&ws, |c| Ok(widget::set_section_folded(c, folded)?))?;
         Ok(Outcome {
             replies: vec![self.widgets_reply()],
             effects: vec![],

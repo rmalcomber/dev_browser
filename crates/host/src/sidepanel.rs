@@ -68,6 +68,11 @@ pub fn apply(open: bool, width: i32, focus: bool) {
             if open { "open" } else { "closed" }
         );
     }
+    // nothing changed and nobody asked for the focus (a second tool was pinned while the panel was already open): leave everything alone,
+    // because re-showing a visible view still takes the keyboard from whoever has it
+    if was == (open, width) && !focus {
+        return;
+    }
     place();
     layout::changed();
     let (view, ctl) = state::with(|s| (s.side_view.clone(), s.side_ctl.clone()));

@@ -41,11 +41,11 @@ Plan: [m1-plan.md](m1-plan.md) (draft).
 
 ## M3: Restricted tools and widget panel
 
-- [ ] Global tool registry; workspace-owned instances. (registry done in M3.1; instances are M3.2)
+- [x] Global tool registry; workspace-owned instances. (M3.1 and M3.2)
 - [x] Capability broker: selected text in, copy out, scoped search. (M3.1)
 - [x] JWT decoder and JSON formatter; sensitive input kept in memory only. (M3.1, with Base64, URL and UUID)
-- [ ] Right panel: resizable, collapsible, per-workspace sections, pin/unpin/reorder. (resizable, collapsible, sections, pin and unpin done in M3.2; reorder is M3.3)
-- [ ] Security tests for IPC, scope and storage.
+- [x] Right panel: resizable, collapsible, per-workspace sections, pin/unpin/reorder. (M3.2 and M3.3)
+- [x] Security tests for IPC, scope and storage. (S5, S6 extended, S9, S7 single pane; M3.1 to M3.3)
 
 ## M4: Split view and hardening
 

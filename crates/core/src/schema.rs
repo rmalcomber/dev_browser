@@ -106,6 +106,16 @@ pub const HOMESCREEN: &[Migration] = &[
         );
     ",
     },
+    Migration {
+        version: 3,
+        name: "panel section state",
+        sql: "
+        CREATE TABLE panel_state (
+            key   TEXT PRIMARY KEY,                  -- e.g. 'section_folded': layout only, never what was typed
+            value TEXT NOT NULL
+        );
+    ",
+    },
 ];
 
 #[cfg(test)]

@@ -96,6 +96,26 @@ try {
   $clip = Copy-Sub $app $token
   if ($clip -and $clip.Trim() -eq 'quokka-9') { Pass 'D: the pinned JWT decoder was still there and works' } else { Fail "D: after the restart the clipboard has '$clip'" }
 
+  # ---- F  a second widget, moved above the first with the keyboard, and the order kept across a restart (M3.3)
+  Write-Host 'Reordering'
+  Send-Keys 'esc'; Start-Sleep -Milliseconds 500
+  Send-Keys 'ctrl+p'; Start-Sleep -Milliseconds 1200
+  $qx = (($c.W - 640) / 2) + 300; Click-Client $app $qx 76; Send-Text 'uuid'; Start-Sleep -Milliseconds 700; Send-Keys 'enter'; Start-Sleep -Milliseconds 1200
+  Send-Keys 'tab'; Send-Keys 'tab'; Send-Keys 'enter'; Start-Sleep -Milliseconds 1000      # Back, Pin: pin the UUID generator
+  Send-Keys 'esc'; Start-Sleep -Milliseconds 800
+  Send-Keys 'ctrl+shift+b'; Start-Sleep -Milliseconds 600; Send-Keys 'ctrl+shift+b'; Start-Sleep -Milliseconds 1200   # hide, show: the focus is in the first widget (the decoder's input)
+  Send-Keys 'tab'; Start-Sleep -Milliseconds 200; Send-Keys 'tab'; Start-Sleep -Milliseconds 200   # the UUID widget's fold button, then its "move up"
+  Send-Keys 'enter'; Start-Sleep -Milliseconds 1000
+  [void](Close-App $app)
+  Stop-App
+  $app = Start-App -Url "http://$h/colours.html" -ReuseDir $dir
+  Start-Sleep -Seconds 2
+  Send-Keys 'ctrl+shift+b'; Start-Sleep -Milliseconds 600; Send-Keys 'ctrl+shift+b'; Start-Sleep -Milliseconds 1200   # the focus goes to the first widget: now the UUID generator's button
+  Set-Clipboard -Value 'untouched'
+  Send-Keys 'enter'; Start-Sleep -Milliseconds 600; Send-Keys 'tab'; Start-Sleep -Milliseconds 200; Send-Keys 'enter'; Start-Sleep -Milliseconds 800   # Generate, then Copy UUID
+  $clip = Get-Clipboard -Raw
+  if ($clip -and $clip.Trim() -match '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') { Pass 'F: the UUID widget was moved above the decoder with the keyboard and it is first after a restart' } else { Fail "F: the first widget after the restart was not the UUID generator (the clipboard has '$clip')" }
+
   # ---- E
   [void](Close-App $app)
   $hits = @()

@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { FieldRow } from './ToolView';
 import { css } from './state';
-import { collapse, focusRequest, folded, resize, runWidget, sections, toggleSection, unpin, widgetState } from './panelState';
+import { collapse, focusRequest, fold, move, resize, runWidget, sections, unpin, width, widgetState } from './panelState';
 import type { PinnedTool } from './panelState';
 
 /** One pinned tool: a title bar, and (unless collapsed) its input and its labelled values. */
-function WidgetCard({ w }: { w: PinnedTool }) {
+function WidgetCard({ w, first, last }: { w: PinnedTool; first: boolean; last: boolean }) {
   const st = widgetState(w.id);
   return (
     <section class="pwidget" aria-label={w.name}>
@@ -15,6 +15,12 @@ function WidgetCard({ w }: { w: PinnedTool }) {
         </button>
         <strong class="pname">{w.name}</strong>
         {w.sensitive && <span class="tsecret">not stored</span>}
+        <button type="button" class="pmove" aria-label={`Move ${w.name} up`} title="Move up" disabled={first} onClick={() => move(w.id, -1)}>
+          ▲
+        </button>
+        <button type="button" class="pmove" aria-label={`Move ${w.name} down`} title="Move down" disabled={last} onClick={() => move(w.id, 1)}>
+          ▼
+        </button>
         <button type="button" class="x" aria-label={`Unpin ${w.name}`} title="Unpin" onClick={() => unpin(w.id)}>
           ×
         </button>
@@ -67,6 +73,13 @@ export function PanelApp() {
     (el?.querySelector<HTMLElement>('.pwidget textarea, .pwidget button.trun') ?? el?.querySelector<HTMLElement>('button'))?.focus();
   }, [focusRequest.value]);
 
+  // From the keyboard the same edge takes the arrow keys: left makes the panel wider, right narrower (the app clamps it and remembers it).
+  const onGripKey = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    resize(e.key === 'ArrowLeft' ? -20 : 20, true);
+  };
+
   // Dragging the left edge resizes the panel (wider when dragged left). The pointer is captured by the edge, so the drag keeps working when
   // the cursor leaves the panel's own view (the page beside it is another window); the app clamps the width and remembers where it ended.
   const grip = useRef<HTMLDivElement>(null);
@@ -105,13 +118,23 @@ export function PanelApp() {
 
   return (
     <div class="panel" ref={root} role="complementary" aria-label="Pinned tools">
-      <div class="pgrip" ref={grip} title="Drag to resize" aria-hidden="true" />
+      <div
+        class="pgrip"
+        ref={grip}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the panel"
+        aria-valuenow={width.value}
+        tabIndex={0}
+        title="Drag to resize, or use the left and right arrow keys"
+        onKeyDown={onGripKey}
+      />
       <div class="pmain">
         {sections.value.map((s) => {
-          const isFolded = folded.value.includes(s.workspace.id);
+          const isFolded = s.folded;
           return (
             <div class="psection" style={{ borderTopColor: css(s.workspace.colour) }}>
-              <button type="button" class="phead" aria-expanded={!isFolded} onClick={() => toggleSection(s.workspace.id)}>
+              <button type="button" class="phead" aria-expanded={!isFolded} onClick={() => fold(!s.folded)}>
                 <span class="ldot" style={{ background: css(s.workspace.colour) }} aria-hidden="true" />
                 <span class="pwsname">{s.workspace.name}</span>
                 <span class="pcount">{s.widgets.length}</span>
@@ -121,7 +144,7 @@ export function PanelApp() {
                 (s.widgets.length === 0 ? (
                   <p class="pempty">Nothing pinned here. Open a tool from the launcher (Ctrl+P) and press Pin.</p>
                 ) : (
-                  s.widgets.map((w) => <WidgetCard w={w} />)
+                  s.widgets.map((w, i) => <WidgetCard w={w} first={i === 0} last={i === s.widgets.length - 1} />)
                 ))}
             </div>
           );

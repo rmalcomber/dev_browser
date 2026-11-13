@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PanelApp } from './PanelApp';
-import { focusRequest, folded, handleMessage, sections, states } from './panelState';
+import { focusRequest, handleMessage, sections, states } from './panelState';
 
 let root: HTMLElement;
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -17,8 +17,8 @@ const tool = (id: number, over: object = {}) => ({
   collapsed: false,
   ...over,
 });
-const widgets = (list: object[], ws = { id: 'ws-a', name: 'Work', colour: 0x2c5fa8 }) =>
-  JSON.stringify({ open: true, width: 320, sections: [{ workspace: ws, widgets: list }] });
+const widgets = (list: object[], ws = { id: 'ws-a', name: 'Work', colour: 0x2c5fa8 }, folded = false) =>
+  JSON.stringify({ open: true, width: 320, sections: [{ workspace: ws, folded, widgets: list }] });
 
 beforeEach(() => {
   root = document.createElement('div');
@@ -26,7 +26,6 @@ beforeEach(() => {
   window.m0 = { send: vi.fn(), onmessage: null };
   sections.value = [];
   states.value = {};
-  folded.value = [];
 });
 afterEach(() => {
   render(null, root);
@@ -84,16 +83,48 @@ describe('the widget panel', () => {
     expect(root.querySelector('textarea')).toBeNull();
   });
 
-  it('folds a workspace section on its own, in the page', async () => {
+  it('folds a workspace section by asking the app, which remembers it', async () => {
     handleMessage('widgets', widgets([tool(1)]));
     render(<PanelApp />, root);
     await tick();
     (root.querySelector('.phead') as HTMLButtonElement).click();
+    expect(sent()).toContainEqual(['panel.fold', JSON.stringify({ folded: true })]);
+    expect(root.querySelector('.pwidget')).not.toBeNull();
+    handleMessage('widgets', widgets([tool(1)], { id: 'ws-a', name: 'Work', colour: 0x2c5fa8 }, true));
     await tick();
     expect(root.querySelector('.pwidget')).toBeNull();
     (root.querySelector('.phead') as HTMLButtonElement).click();
+    expect(sent()).toContainEqual(['panel.fold', JSON.stringify({ folded: false })]);
+  });
+
+  it('moves a widget up or down by asking the app, and not past the ends', async () => {
+    handleMessage('widgets', widgets([tool(1), tool(2, { tool: 'json', name: 'JSON formatter' }), tool(3, { tool: 'uuid', name: 'UUID generator' })]));
+    render(<PanelApp />, root);
     await tick();
-    expect(root.querySelector('.pwidget')).not.toBeNull();
+    const up = (name: string) => root.querySelector(`button[aria-label="Move ${name} up"]`) as HTMLButtonElement;
+    const down = (name: string) => root.querySelector(`button[aria-label="Move ${name} down"]`) as HTMLButtonElement;
+    expect(up('JWT decoder').disabled).toBe(true);
+    expect(down('UUID generator').disabled).toBe(true);
+    down('JWT decoder').click();
+    up('UUID generator').click();
+    expect(sent()).toContainEqual(['widgets.move', JSON.stringify({ id: 1, delta: 1 })]);
+    expect(sent()).toContainEqual(['widgets.move', JSON.stringify({ id: 3, delta: -1 })]);
+  });
+
+  it('resizes from the keyboard: left is wider, right is narrower, each remembered', async () => {
+    handleMessage('widgets', widgets([]));
+    render(<PanelApp />, root);
+    await tick();
+    const grip = root.querySelector('.pgrip') as HTMLElement;
+    expect(grip.getAttribute('role')).toBe('separator');
+    expect(grip.getAttribute('tabindex')).toBe('0');
+    grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    expect(sent().filter((c) => c[0] === 'panel.resize')).toEqual([
+      ['panel.resize', JSON.stringify({ dx: -20, done: true })],
+      ['panel.resize', JSON.stringify({ dx: 20, done: true })],
+    ]);
   });
 
   it('forgets what was typed into a secret tool when the panel closes, and keeps the rest', () => {
@@ -149,7 +180,7 @@ describe('the widget panel', () => {
     render(<PanelApp />, root);
     await tick();
     expect(root.querySelector('.pwidget img')).toBeNull();
-    for (const bad of ['not json', '{}', JSON.stringify({ open: 'yes', width: 1, sections: [] }), JSON.stringify({ open: true, width: 1, sections: [{ workspace: {}, widgets: [] }] })]) handleMessage('widgets', bad);
+    for (const bad of ['not json', '{}', JSON.stringify({ open: 'yes', width: 1, sections: [] }), JSON.stringify({ open: true, width: 1, sections: [{ workspace: {}, folded: false, widgets: [] }] }), JSON.stringify({ open: true, width: 1, sections: [{ workspace: { id: 'a', name: 'b', colour: 1 }, widgets: [] }] })]) handleMessage('widgets', bad);
     expect(sections.value.length).toBe(1);
     handleMessage('widget.output', 'nope');
     handleMessage('widget.output', JSON.stringify({ id: 'x' }));

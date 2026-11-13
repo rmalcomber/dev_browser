@@ -37,10 +37,11 @@ pub use launcher::{
     ScopeRequest, LAUNCHER_CLOSE, LAUNCHER_DRAG, LAUNCHER_OPEN, LAUNCHER_RUN, LAUNCHER_SCOPE,
     LAUNCHER_SEARCH, LAUNCHER_TOOL,
 };
-use widgets::{CollapseIn, PinIn, ResizeIn, WidgetIdIn, WidgetRunIn};
+use widgets::{CollapseIn, FoldIn, PinIn, ResizeIn, WidgetIdIn, WidgetMoveIn, WidgetRunIn};
 
 pub use widgets::{
-    PANEL_RESIZE, WIDGETS_COLLAPSE, WIDGETS_LIST, WIDGETS_PIN, WIDGETS_UNPIN, WIDGET_RUN,
+    PANEL_FOLD, PANEL_RESIZE, WIDGETS_COLLAPSE, WIDGETS_LIST, WIDGETS_MOVE, WIDGETS_PIN,
+    WIDGETS_UNPIN, WIDGET_RUN,
 };
 
 pub const PING: &str = "ping";
@@ -388,6 +389,11 @@ enum Action {
         input: String,
     },
     WidgetsList,
+    WidgetsMove {
+        id: i64,
+        delta: i32,
+    },
+    PanelFold(bool),
     WidgetsPin(String),
     WidgetsUnpin(i64),
     WidgetsCollapse {
@@ -1042,6 +1048,17 @@ impl Backend {
                 Self::no_payload(name, payload)?;
                 Action::WidgetsList
             }
+            WIDGETS_MOVE => {
+                let r: WidgetMoveIn = Self::from_json(name, payload)?;
+                Action::WidgetsMove {
+                    id: r.id,
+                    delta: r.delta,
+                }
+            }
+            PANEL_FOLD => {
+                let r: FoldIn = Self::from_json(name, payload)?;
+                Action::PanelFold(r.folded)
+            }
             WIDGETS_PIN => {
                 let r: PinIn = Self::from_json(name, payload)?;
                 Action::WidgetsPin(r.tool)
@@ -1149,6 +1166,8 @@ impl Backend {
                 replies: vec![self.widgets_reply()],
                 effects: vec![],
             }),
+            Action::WidgetsMove { id, delta } => self.widgets_move(id, delta),
+            Action::PanelFold(folded) => self.panel_fold(folded),
             Action::WidgetsPin(tool) => self.widgets_pin(&tool),
             Action::WidgetsUnpin(id) => self.widgets_unpin(id),
             Action::WidgetsCollapse { id, collapsed } => self.widgets_collapse(id, collapsed),
@@ -4249,5 +4268,101 @@ b{}",
         }
         walk(t.path(), &mut found);
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    // ---- widget order and folded sections (M3.3) ----
+
+    fn ids(v: &Value) -> Vec<i64> {
+        v["sections"][0]["widgets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["id"].as_i64().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn widgets_are_reordered_one_place_at_a_time_in_the_workspace_in_view() {
+        let (_t, mut b, work, personal) = work_and_personal("w-move");
+        let mut made = vec![];
+        for tool in ["jwt", "json", "uuid"] {
+            made.push(ids(&panel(&send(&mut b, WIDGETS_PIN, json!({"tool": tool}))))[made.len()]);
+        }
+        let p = panel(&send(
+            &mut b,
+            WIDGETS_MOVE,
+            json!({"id": made[2], "delta": -1}),
+        ));
+        assert_eq!(ids(&p), vec![made[0], made[2], made[1]]);
+        assert_eq!(pinned(&p), vec!["jwt", "uuid", "json"]);
+        // at the ends nothing moves and it is not an error; two places or none are errors
+        let p = panel(&send(
+            &mut b,
+            WIDGETS_MOVE,
+            json!({"id": made[0], "delta": -1}),
+        ));
+        assert_eq!(ids(&p), vec![made[0], made[2], made[1]]);
+        assert_eq!(
+            first_reply(&send(
+                &mut b,
+                WIDGETS_MOVE,
+                json!({"id": made[0], "delta": 2})
+            ))
+            .0,
+            "error"
+        );
+        assert!(b
+            .handle(WIDGETS_MOVE, r#"{"id":1,"delta":1,"workspace":"x"}"#)
+            .is_err());
+        // another workspace's widget cannot be moved from here
+        send(&mut b, ACTIVATE, json!({"id": personal.as_str()}));
+        assert_eq!(
+            first_reply(&send(
+                &mut b,
+                WIDGETS_MOVE,
+                json!({"id": made[0], "delta": 1})
+            ))
+            .0,
+            "error"
+        );
+        send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        assert_eq!(
+            ids(&panel(&send(&mut b, WIDGETS_LIST, json!({})))),
+            vec![made[0], made[2], made[1]]
+        );
+    }
+
+    #[test]
+    fn a_folded_section_is_remembered_per_workspace_across_a_restart() {
+        let t = TempDir::new("w-fold");
+        let (work, personal);
+        {
+            let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
+            b.startup();
+            work = b.active().clone();
+            send(&mut b, CREATE, json!({"name": "Personal", "colour": 1}));
+            personal = b.active().clone();
+            send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+            let p = panel(&send(&mut b, PANEL_FOLD, json!({"folded": true})));
+            assert_eq!(p["sections"][0]["folded"], true);
+            send(&mut b, ACTIVATE, json!({"id": personal.as_str()}));
+            assert_eq!(
+                panel(&send(&mut b, WIDGETS_LIST, json!({})))["sections"][0]["folded"],
+                false,
+                "Personal is not folded"
+            );
+            assert!(b
+                .handle(PANEL_FOLD, r#"{"folded":true,"workspace":"x"}"#)
+                .is_err());
+        }
+        let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
+        b.startup();
+        send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        assert_eq!(
+            panel(&send(&mut b, WIDGETS_LIST, json!({})))["sections"][0]["folded"],
+            true
+        );
+        let p = panel(&send(&mut b, PANEL_FOLD, json!({"folded": false})));
+        assert_eq!(p["sections"][0]["folded"], false);
     }
 }

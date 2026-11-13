@@ -13,6 +13,8 @@ export interface PinnedTool {
 }
 export interface Section {
   workspace: { id: string; name: string; colour: number };
+  /** Is this workspace's section folded? The app remembers it. */
+  folded: boolean;
   widgets: PinnedTool[];
 }
 /** What was typed into a widget and what it answered: memory only, never sent anywhere but to the app to run the tool. */
@@ -27,8 +29,6 @@ export const sections = signal<Section[]>([]);
 export const open = signal(false);
 export const width = signal(320);
 export const states = signal<Record<number, WidgetState>>({});
-/** Workspace sections the user folded (this run only). */
-export const folded = signal<string[]>([]);
 /** Bumped when the app wants the keyboard focus inside the panel. */
 export const focusRequest = signal(0);
 
@@ -56,6 +56,7 @@ function isSection(v: unknown): v is Section {
     typeof s.workspace.id === 'string' &&
     typeof s.workspace.name === 'string' &&
     typeof s.workspace.colour === 'number' &&
+    typeof s.folded === 'boolean' &&
     Array.isArray(s.widgets) &&
     s.widgets.every(isTool)
   );
@@ -114,7 +115,8 @@ export const runWidget = (id: number, input: string) => {
 export const unpin = (id: number) => send('widgets.unpin', { id });
 export const collapse = (id: number, collapsed: boolean) => send('widgets.collapse', { id, collapsed });
 export const resize = (dx: number, done: boolean) => send('panel.resize', { dx: Math.round(dx), done });
-export const toggleSection = (workspace: string) => {
-  folded.value = folded.value.includes(workspace) ? folded.value.filter((w) => w !== workspace) : [...folded.value, workspace];
-};
+/** Fold or unfold the section of the workspace in view; the app remembers it. */
+export const fold = (folded: boolean) => send('panel.fold', { folded });
+/** Move a pinned tool one place up (-1) or down (1). */
+export const move = (id: number, delta: -1 | 1) => send('widgets.move', { id, delta });
 export const widgetState = (id: number): WidgetState => states.value[id] ?? empty();

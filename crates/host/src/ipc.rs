@@ -135,6 +135,31 @@ mod tests {
     }
 
     #[test]
+    fn the_launcher_and_the_panel_are_trusted_like_the_shell_and_nothing_else_is() {
+        for role in [Role::Launcher, Role::Panel] {
+            assert!(trusted(role, "app://shell/launcher.html"));
+            assert!(trusted(role, "app://shell/panel.html"));
+            assert!(
+                !trusted(role, "https://example.com/"),
+                "{role:?} that has navigated away is not"
+            );
+            assert!(
+                !trusted(role, "app://shell.evil.example/"),
+                "only the real origin"
+            );
+            assert!(!trusted(role, ""));
+        }
+        // a page view is never trusted, whichever trusted page it claims to show
+        for url in [
+            "app://shell/index.html",
+            "app://shell/launcher.html",
+            "app://shell/panel.html",
+        ] {
+            assert!(!trusted(Role::Page, url));
+        }
+    }
+
+    #[test]
     fn js_strings_cannot_break_out() {
         assert_eq!(js_string("plain"), "\"plain\"");
         assert_eq!(js_string("a\"b\\c"), "\"a\\\"b\\\\c\"");

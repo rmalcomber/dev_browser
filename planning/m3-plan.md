@@ -25,6 +25,8 @@ not logged or persisted). All three are in `security-acceptance-tests.md`.
 
 **M3.2 status: done 2026-11-13** (see the M3.2 entry in `docs/ai/decisions.md`). `tools\m32-panel.ps1` passes on the real window.
 
+**M3.3 status: done 2026-11-13** (see the M3.3 entry in `docs/ai/decisions.md`). **M3 is done.** Reorder, remembered folded sections and keyboard resize work; S5, S6 (extended to the launcher and panel pages), S9 and single-pane S7 pass. Open for M4: S7 for two panes, and a frame check of the panel on workspace switches.
+
 ## Not in M3
 
 Third-party tools and any sandbox for them, split-view panes (M4: until then the focused pane is the shown tab), clipboard read, network tools (curl, http) which need a network capability of their own.

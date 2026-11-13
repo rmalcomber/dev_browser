@@ -81,6 +81,57 @@ pub fn set_collapsed(conn: &Connection, id: i64, collapsed: bool) -> rusqlite::R
     )? > 0)
 }
 
+/// Move a widget one place up (`-1`) or down (`1`) in the list by swapping places with its neighbour. Returns whether anything moved.
+pub fn move_by(conn: &Connection, id: i64, delta: i32) -> Result<bool, String> {
+    let sql = |e: rusqlite::Error| e.to_string();
+    let list = all(conn).map_err(sql)?;
+    let at = list
+        .iter()
+        .position(|w| w.id == id)
+        .ok_or("there is no such widget")?;
+    let to = match delta {
+        -1 if at > 0 => at - 1,
+        1 if at + 1 < list.len() => at + 1,
+        -1 | 1 => return Ok(false), // already first or last
+        _ => return Err("a widget moves one place at a time".into()),
+    };
+    // renumber 0..n in the new order, so positions stay a clean sequence whatever they were before
+    let mut order: Vec<i64> = list.iter().map(|w| w.id).collect();
+    order.swap(at, to);
+    let tx = conn.unchecked_transaction().map_err(sql)?;
+    for (i, wid) in order.iter().enumerate() {
+        tx.execute(
+            "UPDATE widgets SET position = ?2 WHERE id = ?1",
+            params![wid, i as i64],
+        )
+        .map_err(sql)?;
+    }
+    tx.commit().map_err(sql)?;
+    Ok(true)
+}
+
+/// Is this workspace's section of the panel folded? (Layout only.)
+pub fn section_folded(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT value FROM panel_state WHERE key = 'section_folded'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .as_deref()
+        == Some("1")
+}
+
+pub fn set_section_folded(conn: &Connection, folded: bool) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO panel_state (key, value) VALUES ('section_folded', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [if folded { "1" } else { "0" }],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +165,43 @@ mod tests {
         assert!(!unpin(&c, a.id).unwrap());
         assert_eq!(all(&c).unwrap().len(), 2);
         assert!(!set_collapsed(&c, 9999, true).unwrap());
+    }
+
+    #[test]
+    fn widgets_move_one_place_at_a_time_and_stop_at_the_ends() {
+        let c = db();
+        let a = pin(&c, "jwt").unwrap();
+        let b = pin(&c, "json").unwrap();
+        let d = pin(&c, "uuid").unwrap();
+        let order = |c: &Connection| {
+            all(c)
+                .unwrap()
+                .into_iter()
+                .map(|w| w.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&c), vec![a.id, b.id, d.id]);
+        assert!(move_by(&c, d.id, -1).unwrap());
+        assert_eq!(order(&c), vec![a.id, d.id, b.id]);
+        assert!(move_by(&c, a.id, 1).unwrap());
+        assert_eq!(order(&c), vec![d.id, a.id, b.id]);
+        assert!(!move_by(&c, d.id, -1).unwrap(), "already first");
+        assert!(!move_by(&c, b.id, 1).unwrap(), "already last");
+        assert!(move_by(&c, a.id, 2).is_err(), "one place at a time");
+        assert!(move_by(&c, a.id, 0).is_err());
+        assert!(move_by(&c, 9999, 1).is_err());
+        let positions: Vec<i64> = all(&c).unwrap().into_iter().map(|w| w.position).collect();
+        assert_eq!(positions, vec![0, 1, 2], "positions stay a clean sequence");
+    }
+
+    #[test]
+    fn the_folded_state_of_a_section_is_stored_and_defaults_to_open() {
+        let c = db();
+        assert!(!section_folded(&c));
+        set_section_folded(&c, true).unwrap();
+        assert!(section_folded(&c));
+        set_section_folded(&c, false).unwrap();
+        assert!(!section_folded(&c));
     }
 
     #[test]

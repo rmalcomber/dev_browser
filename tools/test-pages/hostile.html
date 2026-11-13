@@ -17,40 +17,43 @@
   var r = { m0Type: typeof window.m0, m0Keys: [], fetch: '?', xhr: '?', iframe: '?', topM0: typeof top.m0 };
   try { r.m0Keys = Object.getOwnPropertyNames(window).filter(function (k) { return /m0/i.test(k); }); } catch (e) { r.m0Keys = ['error ' + e.name]; }
 
-  var pending = 3;
+  // every trusted page, not only the sidebar: the launcher and the widget panel are app://shell pages too (M2, M3)
+  var targets = ['index.html', 'launcher.html', 'panel.html'];
+  var pending = 3 * targets.length;
+  var bad = { fetch: [], xhr: [], iframe: [] };
   function done() {
     if (--pending > 0) return;
+    r.fetch = bad.fetch.length ? 'LEAK ' + bad.fetch.join(',') : 'blocked';
+    r.xhr = bad.xhr.length ? 'LEAK ' + bad.xhr.join(',') : 'blocked';
+    r.iframe = bad.iframe.length ? 'LEAK ' + bad.iframe.join(',') : 'blocked';
     document.title = '[s6] ' + JSON.stringify(r);
     document.getElementById('out').textContent = document.title;
   }
-
-  // 1. fetch the shell page: it is a different origin and sends no CORS permission, so this must fail
-  fetch('app://shell/index.html').then(
-    function (resp) { r.fetch = 'LEAK status ' + resp.status; done(); },
-    function (e) { r.fetch = 'blocked'; done(); });
-
-  // 2. the same with XMLHttpRequest
-  try {
-    var x = new XMLHttpRequest();
-    x.open('GET', 'app://shell/index.html');
-    x.onload = function () { r.xhr = 'LEAK status ' + x.status; done(); };
-    x.onerror = function () { r.xhr = 'blocked'; done(); };
-    x.send();
-  } catch (e) { r.xhr = 'blocked'; done(); }
-
-  // 3. frame the shell and try to read into it: the shell must not be readable from here
-  var f = document.createElement('iframe');
-  f.src = 'app://shell/index.html';
-  document.body.appendChild(f);
-  setTimeout(function () {
-    // Leak = the shell's own content (or its binding) is readable from here. An empty or error document is not a leak.
+  targets.forEach(function (t) {
+    var url = 'app://shell/' + t;
+    // 1. fetch it: a different origin that sends no CORS permission, so this must fail
+    fetch(url).then(function (resp) { bad.fetch.push(t + ' ' + resp.status); done(); }, function () { done(); });
+    // 2. the same with XMLHttpRequest
     try {
-      var d = f.contentWindow.document, text = (d.body && d.body.innerText) || '';
-      r.iframeUrl = d.URL;
-      r.iframe = (/Dev Browser|Ping/.test(text) || typeof f.contentWindow.m0 !== 'undefined') ? 'LEAK ' + text.slice(0, 40) : 'blocked';
-    } catch (e) { r.iframe = 'blocked'; }
-    done();
-  }, 2500);
+      var x = new XMLHttpRequest();
+      x.open('GET', url);
+      x.onload = function () { bad.xhr.push(t + ' ' + x.status); done(); };
+      x.onerror = function () { done(); };
+      x.send();
+    } catch (e) { done(); }
+    // 3. frame it and try to read into it: it must not be readable from here
+    var f = document.createElement('iframe');
+    f.src = url;
+    document.body.appendChild(f);
+    setTimeout(function () {
+      // Leak = the trusted page's own content (or its binding) is readable from here. An empty or error document is not a leak.
+      try {
+        var d = f.contentWindow.document, text = (d.body && d.body.innerText) || '';
+        if (/Dev Browser|Ping|Searching|Pinned|Launcher/.test(text) || typeof f.contentWindow.m0 !== 'undefined') bad.iframe.push(t + ' ' + text.slice(0, 40));
+      } catch (e) { /* not readable: good */ }
+      done();
+    }, 2500);
+  });
 })();
 </script>
 </body>

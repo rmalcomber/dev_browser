@@ -122,3 +122,5 @@ input { font: inherit; color: #eee; background: #252526; border: 1px solid #4a4a
 .pbody { display: flex; flex-direction: column; gap: 6px; padding: 0 8px 8px; }
 .pbody .tfield { grid-template-columns: 1fr auto; }
 .pbody .tlabel { grid-column: 1 / 3; }
+.pmove { font-size: 9px; padding: 1px 4px; border-color: transparent; background: transparent; }
+.pgrip:focus-visible { outline: 2px solid #4da3ff; outline-offset: -2px; }
