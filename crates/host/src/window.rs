@@ -75,6 +75,10 @@ wrap_window_delegate! {
             quit_message_loop();
         }
         fn window_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::ALLOY }
+        // The title bar has minimise, maximise and close buttons (the Views default has only close), and the window can be resized.
+        fn can_resize(&self, _w: Option<&mut Window>) -> i32 { 1 }
+        fn can_maximize(&self, _w: Option<&mut Window>) -> i32 { 1 }
+        fn can_minimize(&self, _w: Option<&mut Window>) -> i32 { 1 }
         // Ask every browser to close. Each answers "not yet" the first time and CEF retries the window close for only one of them, which
         // needed a second click on X in M0. So retry here until every browser agrees.
         fn can_close(&self, _w: Option<&mut Window>) -> i32 {

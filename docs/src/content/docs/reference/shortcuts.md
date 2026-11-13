@@ -36,8 +36,11 @@ The Dev Browser is keyboard-first: every action is a named command with a defaul
 | `Ctrl+Shift+S` | Save the download that is waiting for an answer |
 | `Ctrl+Shift+X` | Cancel the download that is waiting for an answer |
 | `Ctrl+P` | Open the launcher (search tabs, bookmarks, history and commands; `Esc` closes it) |
-| `Ctrl+Shift+B` | Show or hide the widget panel (showing it puts the focus in the first pinned tool; hiding it gives the page the focus back) |
+| `Ctrl+Shift+B` | Expand or collapse the widget panel (expanding it puts the focus in the first pinned tool; collapsing it gives the page the focus back) |
 | `Ctrl+D` | Bookmark this page in its workspace, or remove its bookmark |
+| `Ctrl+B` | Collapse the sidebar to a narrow rail, or expand it again (the rail has a button to expand it, too) |
+| `Ctrl+Shift+M` | Minimise the window |
+| `F11` | Maximise the window, or restore it |
 | `Alt+N` | New workspace (opens the name field in the sidebar) |
 | `Alt+PageDown` | Next workspace |
 | `Alt+PageUp` | Previous workspace |

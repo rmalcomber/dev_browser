@@ -41,6 +41,28 @@ pub fn execute(effect: Effect) {
         Effect::NewWorkspaceForm => focus_shell("new-workspace"),
         Effect::Download { id, save } => downloads::decide(id, save),
         Effect::RequestSelection => selection::request(),
+        Effect::Sidebar { collapsed } => {
+            state::with(|s| s.shell_collapsed = collapsed);
+            println!(
+                "[host] sidebar {}",
+                if collapsed { "collapsed" } else { "expanded" }
+            );
+            layout::changed();
+        }
+        Effect::MinimizeWindow => {
+            if let Some(w) = state::with(|s| s.window.clone()) {
+                w.minimize();
+            }
+        }
+        Effect::ToggleMaximize => {
+            if let Some(w) = state::with(|s| s.window.clone()) {
+                if w.is_maximized() != 0 {
+                    w.restore();
+                } else {
+                    w.maximize();
+                }
+            }
+        }
         Effect::Panel { open, width, focus } => sidepanel::apply(open, width, focus),
         Effect::ShowLauncher => launcher::show(),
         Effect::HideLauncher => launcher::hide(),

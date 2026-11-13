@@ -49,7 +49,7 @@ export function ToolView() {
             ref={input}
             class="tinput"
             aria-label={`${t.name} input`}
-            placeholder="Type or paste here"
+            placeholder={t.hint || 'Type or paste here'}
             spellcheck={false}
             value={toolInput.value}
             onInput={(e) => runTool(t.tool, (e.currentTarget as HTMLTextAreaElement).value)}

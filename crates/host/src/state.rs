@@ -51,6 +51,10 @@ pub struct State {
     pub side_view: Option<BrowserView>,
     pub side_ctl: Option<OverlayController>,
     pub side_open: bool,
+    /// The panel's overlay has been shown (it stays shown; only its size changes).
+    pub side_shown: bool,
+    /// The sidebar is collapsed to a rail (set by core).
+    pub shell_collapsed: bool,
     /// A panel that core asked to open while the launcher was open: shown when the launcher closes.
     pub side_deferred: Option<(bool, i32)>,
     pub side_width: i32,

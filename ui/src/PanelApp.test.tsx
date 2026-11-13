@@ -149,7 +149,7 @@ describe('the widget panel', () => {
     render(<PanelApp />, root);
     await tick();
     handleMessage('panel.focus', '{}');
-    await tick();
+    await new Promise((r) => setTimeout(r, 50)); // effects run after the paint
     expect(focusRequest.value).toBeGreaterThan(0);
     expect(document.activeElement?.tagName).toBe('TEXTAREA');
   });

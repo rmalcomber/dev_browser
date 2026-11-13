@@ -10,6 +10,23 @@ use crate::state;
 use cef::*;
 
 pub const SHELL_WIDTH: i32 = 220;
+/// The sidebar collapsed to a rail, and the widget panel collapsed to a rail.
+pub const SHELL_RAIL: i32 = 44;
+pub const SIDE_RAIL: i32 = 32;
+
+/// How much of the window the sidebar takes now.
+pub fn shell_extent() -> i32 {
+    if state::with(|s| s.shell_collapsed) {
+        SHELL_RAIL
+    } else {
+        SHELL_WIDTH
+    }
+}
+
+/// How much of the window the widget panel takes now: its width, or just its rail when collapsed.
+pub fn side_extent() -> i32 {
+    state::with(|s| if s.side_open { s.side_width } else { SIDE_RAIL })
+}
 /// Width of the workspace-coloured frame around a page, inside its wrapper panel. A visual indicator, not a security boundary.
 pub const FRAME_PX: i32 = 3;
 
@@ -31,7 +48,7 @@ wrap_browser_view_delegate! {
     pub struct ViewStyle { page: bool }
     impl ViewDelegate {
         fn preferred_size(&self, _v: Option<&mut View>) -> Size {
-            let w = if self.page { (state::with(|s| s.page_width) - 2 * FRAME_PX).max(1) } else { SHELL_WIDTH };
+            let w = if self.page { (state::with(|s| s.page_width) - 2 * FRAME_PX).max(1) } else { shell_extent() };
             Size { width: w, height: 100 }
         }
     }
@@ -56,8 +73,8 @@ wrap_panel_delegate! {
 }
 
 /// The page width for a given panel width.
-pub fn page_width(panel_width: i32, side: i32) -> i32 {
-    (panel_width - SHELL_WIDTH - side).max(1)
+pub fn page_width(panel_width: i32, shell: i32, side: i32) -> i32 {
+    (panel_width - shell - side).max(1)
 }
 
 /// The set of visible views changed: re-install the layout even if the window size did not.
@@ -90,7 +107,15 @@ pub fn relayout() {
     }
     state::with(|s| {
         s.last_layout = (size.width, size.height, generation);
-        s.page_width = page_width(size.width, if s.side_open { s.side_width } else { 0 });
+        s.page_width = page_width(
+            size.width,
+            if s.shell_collapsed {
+                SHELL_RAIL
+            } else {
+                SHELL_WIDTH
+            },
+            if s.side_open { s.side_width } else { SIDE_RAIL },
+        );
     });
     let Some(layout) = panel.set_to_box_layout(Some(&BoxLayoutSettings {
         horizontal: 1,
@@ -113,15 +138,32 @@ pub fn relayout() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn the_page_takes_what_the_shell_leaves() {
-        assert_eq!(super::page_width(1200, 0), 1200 - super::SHELL_WIDTH);
+    fn the_page_takes_what_the_sidebar_and_the_panel_leave() {
+        assert_eq!(page_width(1200, SHELL_WIDTH, 0), 1200 - SHELL_WIDTH);
         assert_eq!(
-            super::page_width(1200, 320),
-            1200 - super::SHELL_WIDTH - 320,
+            page_width(1200, SHELL_WIDTH, 320),
+            1200 - SHELL_WIDTH - 320,
             "the panel takes its strip"
         );
-        assert_eq!(super::page_width(100, 0), 1, "never zero or negative");
-        assert_eq!(super::page_width(400, 320), 1, "never zero or negative");
+        assert_eq!(
+            page_width(1200, SHELL_RAIL, SIDE_RAIL),
+            1200 - 44 - 32,
+            "both collapsed to rails"
+        );
+        const {
+            assert!(
+                SHELL_RAIL < SHELL_WIDTH && SIDE_RAIL < 220,
+                "a rail is narrower than what it replaces"
+            )
+        };
+        assert_eq!(page_width(100, SHELL_WIDTH, 0), 1, "never zero or negative");
+        assert_eq!(
+            page_width(400, SHELL_WIDTH, 320),
+            1,
+            "never zero or negative"
+        );
     }
 }

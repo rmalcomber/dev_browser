@@ -144,6 +144,14 @@ pub enum Effect {
         width: i32,
         focus: bool,
     },
+    /// Collapse the sidebar to a narrow rail, or expand it again.
+    Sidebar {
+        collapsed: bool,
+    },
+    /// Minimise the window.
+    MinimizeWindow,
+    /// Maximise the window, or restore it if it is maximised.
+    ToggleMaximize,
     /// Ask the shown page for its text selection (`page.selection.read`), on the user action of opening the launcher.
     RequestSelection,
     /// The user answered a download offer: save it (to the app's own folder, under a safe name) or cancel it.
@@ -171,6 +179,8 @@ struct WorkspaceOut {
 struct StateOut {
     workspaces: Vec<WorkspaceOut>,
     active: String,
+    /// Is the sidebar collapsed to a narrow rail? (Saved in the global settings.)
+    sidebar_collapsed: bool,
 }
 
 #[derive(Serialize)]
@@ -434,6 +444,7 @@ pub struct Backend {
     launcher: LauncherState,
     /// The right-hand widget panel: open or not, and how wide (saved in the global settings).
     panel_open: bool,
+    sidebar_collapsed: bool,
     panel_width: i32,
     orphans_removed: Vec<Id>,
 }
@@ -460,6 +471,11 @@ impl Backend {
             "about:blank".to_string()
         };
         let (panel_open, panel_width) = Self::load_panel(&global);
+        let sidebar_collapsed = settings::get(&global, "sidebar_collapsed")
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some("1");
         Ok(Backend {
             data,
             global,
@@ -473,6 +489,7 @@ impl Backend {
             offers: HashSet::new(),
             launcher: LauncherState::default(),
             panel_open,
+            sidebar_collapsed,
             panel_width,
             orphans_removed,
         })
@@ -526,6 +543,7 @@ impl Backend {
         let state = StateOut {
             workspaces,
             active: self.active.to_string(),
+            sidebar_collapsed: self.sidebar_collapsed,
         };
         Reply {
             name: "workspaces",
@@ -712,6 +730,9 @@ impl Backend {
         if let Err(e) = result {
             return Self::user_error("startup", e);
         }
+        effects.push(Effect::Sidebar {
+            collapsed: self.sidebar_collapsed,
+        });
         effects.push(self.panel_effect(false));
         effects.push(Effect::FocusPage);
         self.both(effects)
@@ -1420,6 +1441,22 @@ impl Backend {
             "nav.address" => Ok(Self::just(Effect::FocusAddress)),
             "launcher.open" => Ok(self.launcher_open()),
             "panel.toggle" => self.panel_toggle(),
+            "sidebar.toggle" => {
+                self.sidebar_collapsed = !self.sidebar_collapsed;
+                let _ = settings::set(
+                    &self.global,
+                    "sidebar_collapsed",
+                    if self.sidebar_collapsed { "1" } else { "0" },
+                );
+                Ok(Outcome {
+                    replies: vec![self.state_reply()],
+                    effects: vec![Effect::Sidebar {
+                        collapsed: self.sidebar_collapsed,
+                    }],
+                })
+            }
+            "window.minimize" => Ok(Self::just(Effect::MinimizeWindow)),
+            "window.maximize" => Ok(Self::just(Effect::ToggleMaximize)),
             "bookmark.toggle" => self.bookmark_toggle(),
             "history.clear" => self.history_clear(),
             "entry.save" => self.entry_save(None),
@@ -1699,6 +1736,7 @@ mod tests {
                     url: START.into(),
                     colour: FIRST_COLOUR
                 },
+                Effect::Sidebar { collapsed: false },
                 Effect::Panel {
                     open: false,
                     width: widgets::PANEL_DEFAULT,
@@ -3741,7 +3779,14 @@ b{}",
         }
         let order = |b: &mut Backend| {
             let r = results(&send(b, LAUNCHER_SEARCH, json!({"query": "orchid"})));
-            titles(&r)
+            // only the entries: a tool can match the letters of "orchid" scattered through its name
+            r["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|x| x["kind"] == "entry")
+                .map(|x| x["title"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
         };
         assert_eq!(
             order(&mut b),
@@ -3790,6 +3835,7 @@ b{}",
             .as_array()
             .unwrap()
             .iter()
+            .filter(|x| x["kind"] == "entry")
             .map(|x| {
                 format!(
                     "{}:{}",
@@ -4364,5 +4410,52 @@ b{}",
         );
         let p = panel(&send(&mut b, PANEL_FOLD, json!({"folded": false})));
         assert_eq!(p["sections"][0]["folded"], false);
+    }
+
+    // ---- collapsing the sidebar, and the window commands ----
+
+    #[test]
+    fn the_sidebar_collapses_expands_and_is_remembered() {
+        let t = TempDir::new("sidebar-collapse");
+        {
+            let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
+            assert_eq!(state(&b)["sidebar_collapsed"], false);
+            let o = b.run_command("sidebar.toggle", Source::Page);
+            assert_eq!(o.effects, vec![Effect::Sidebar { collapsed: true }]);
+            assert_eq!(
+                first_reply(&o).1["sidebar_collapsed"],
+                true,
+                "the shell is told"
+            );
+        }
+        let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
+        assert!(b
+            .startup()
+            .effects
+            .contains(&Effect::Sidebar { collapsed: true }));
+        let o = b.run_command("sidebar.toggle", Source::Shell);
+        assert_eq!(o.effects, vec![Effect::Sidebar { collapsed: false }]);
+        assert_eq!(state(&b)["sidebar_collapsed"], false);
+    }
+
+    #[test]
+    fn minimise_and_maximise_are_commands_with_shortcuts() {
+        let (_t, mut b) = backend("window-commands");
+        assert_eq!(
+            b.run_command("window.minimize", Source::Page).effects,
+            vec![Effect::MinimizeWindow]
+        );
+        assert_eq!(
+            b.run_command("window.maximize", Source::Shell).effects,
+            vec![Effect::ToggleMaximize]
+        );
+        assert!(commands::find("window.minimize")
+            .unwrap()
+            .chords
+            .contains(&"ctrl+shift+m"));
+        assert!(commands::find("window.maximize")
+            .unwrap()
+            .chords
+            .contains(&"f11"));
     }
 }

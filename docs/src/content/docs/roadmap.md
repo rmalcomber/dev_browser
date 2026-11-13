@@ -12,7 +12,7 @@ An honest, short list of what is next. Move items to a release page when they sh
 | M0 | Feasibility spike: Chromium under Rust, overlay, `Ctrl+P` interception, two isolated sessions, two panes | Done on Windows: direct CEF through cef-rs |
 | M1 | Workspaces, per-workspace databases and sessions, sidebar, address bar, tabs, safety nets, restore | Built (unreleased alpha); the hand test on real accounts is still open |
 | M2 | Launcher: scoped search, bookmarks, `Ctrl+D`, explicit wider search | Built (unreleased alpha): `Ctrl+P`, scoped search of tabs, commands, bookmarks, history and saved entries, ranking by use, `Ctrl+D`, and an explicit temporary wider search |
-| M3 | Restricted tools, capability broker, right-hand widget panel | Built (unreleased alpha): five tools, the page selection, and a resizable, reorderable widget panel with pinning |
+| M3 | Restricted tools, capability broker, right-hand widget panel | Built (unreleased alpha): twenty tools, the page selection, and a resizable, reorderable, collapsible widget panel with pinning |
 | M4 | Split view, downloads and permissions, packaging, security updates, hardening | Planned |
 
 ## What works today
@@ -28,7 +28,8 @@ Built in M1, on Windows, not yet released:
 - The browser's own error pages for failed loads, certificate errors (never bypassed) and crashed pages; popups only when you asked for them; downloads that wait for your answer.
 - Tabs, groups, the selected tab, the window size and each workspace's login come back after a restart, including after the app is killed.
 
-- Five built-in tools (JWT decoder, JSON formatter, Base64, URL, UUID) in the launcher, started from the text selected on the page, with a copy button per value.
+- Twenty built-in tools in the launcher (JWT, JSON, Base64, URL, UUID, hashes, passwords, calculator, number bases, byte sizes, Unix time, cron, case, word count, placeholder text, diff, CSV and JSON, chmod, IPv4 networks, colours), started from the text selected on the page, with a copy button per value.
+- A title bar with minimise, maximise and close, and a sidebar and widget panel that each collapse to a rail.
 
 - A right-hand widget panel: pin a tool from the launcher, `Ctrl+Shift+B` to show or hide it, resize it (mouse or arrow keys), reorder, collapse or unpin widgets and fold the workspace section; it all comes back after a restart.
 

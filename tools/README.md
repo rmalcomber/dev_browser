@@ -33,6 +33,7 @@ unlocked interactive desktop: **leave the mouse and keyboard alone while one run
 | Script | What it does |
 | --- | --- |
 | `s6-hostile-page.ps1` | S6: a hostile page cannot see `window.m0` or reach `app://shell`. Needs node. Exit code 0 = pass. |
+| `m41-window.ps1` | Window and panels: F11 maximises and restores, `Ctrl+Shift+M` minimises, `Ctrl+B` collapses the sidebar to a rail (and it stays collapsed after a restart), the panel collapses to a rail and expands, and the calculator works from the launcher and copies its result. About 1 minute; needs node. |
 | `m32-panel.ps1` | M3.2 and M3.3 checks (reordering with the keyboard included): pin a tool from the launcher with the keyboard, the panel opens and the page ends where it begins, `Ctrl+Shift+B` hides and shows it (and focuses the tool), a token pasted into the widget decodes and copies, a real drag resizes it, the layout survives a restart, and the token is in no database or log (S9). About 2 minutes; needs node. |
 | `m31-tools.ps1` | M3.1 checks: a real triple-click selects a token, `Ctrl+P` captures it, the JWT decoder starts from it and Copy puts a chosen claim on the clipboard, the UUID tool, nothing captured over another tab, and the token in no database or log line (S9). About 2 minutes; needs node. |
 | `m23-entries.ps1` | M2.3 checks: saving entries from the launcher (with an environment), finding and opening one, ranking by how often a result was opened, and clearing history resetting the order. About 2 minutes; needs node. |

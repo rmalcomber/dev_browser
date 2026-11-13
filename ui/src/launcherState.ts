@@ -39,6 +39,8 @@ export interface OpenTool {
   description: string;
   takes_input: boolean;
   sensitive: boolean;
+  /** What the input box reads (its placeholder). */
+  hint?: string;
   input: string;
   from_selection: boolean;
 }

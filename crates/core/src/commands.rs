@@ -188,6 +188,13 @@ pub const COMMANDS: &[Command] = &[
     cmd!("nav.address", "Go to the address bar", ["ctrl+l"]),
     cmd!("launcher.open", "Open the launcher", ["ctrl+p"]),
     cmd!(
+        "sidebar.toggle",
+        "Collapse or expand the sidebar",
+        ["ctrl+b"]
+    ),
+    cmd!("window.minimize", "Minimise the window", ["ctrl+shift+m"]),
+    cmd!("window.maximize", "Maximise or restore the window", ["f11"]),
+    cmd!(
         "panel.toggle",
         "Show or hide the widget panel",
         ["ctrl+shift+b"]

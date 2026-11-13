@@ -9,6 +9,7 @@ export interface PinnedTool {
   description: string;
   takes_input: boolean;
   sensitive: boolean;
+  hint?: string;
   collapsed: boolean;
 }
 export interface Section {
@@ -31,6 +32,8 @@ export const width = signal(320);
 export const states = signal<Record<number, WidgetState>>({});
 /** Bumped when the app wants the keyboard focus inside the panel. */
 export const focusRequest = signal(0);
+/** The app asked for the focus and it has not been given yet: the request can arrive while the panel is still a rail (it expands a moment later). */
+export const focusWanted = signal(false);
 
 const empty = (): WidgetState => ({ input: '', output: null, error: null });
 
@@ -94,6 +97,7 @@ export function handleMessage(name: string, payload: string): void {
           : { ...cur, output: null, error: typeof o.error === 'string' ? o.error : 'that did not work' };
       states.value = { ...states.value, [o.id]: next };
     } else if (name === 'panel.focus') {
+      focusWanted.value = true;
       focusRequest.value++;
     } else if (name === 'panel.closed') {
       clearSecrets();
@@ -112,6 +116,8 @@ export const runWidget = (id: number, input: string) => {
   states.value = { ...states.value, [id]: { ...(states.value[id] ?? empty()), input } };
   send('widget.run', { id, input });
 };
+/** Collapse or expand the panel: the same command as its shortcut, so there is one path for it. */
+export const togglePanel = () => send('command', { id: 'panel.toggle' });
 export const unpin = (id: number) => send('widgets.unpin', { id });
 export const collapse = (id: number, collapsed: boolean) => send('widgets.collapse', { id, collapsed });
 export const resize = (dx: number, done: boolean) => send('panel.resize', { dx: Math.round(dx), done });

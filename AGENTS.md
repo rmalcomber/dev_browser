@@ -23,6 +23,7 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 | Check (fmt, clippy, tests, ui build) | `tools\build.ps1 check` |
 | Build | `tools\build.ps1 build` |
 | Security check S6 (hostile page; needs a build and node) | `tools\s6-hostile-page.ps1` |
+| Window buttons, collapsible sidebar and panel, a later tool (F11, Ctrl+Shift+M, Ctrl+B, Ctrl+Shift+B, the calculator; about 1 minute, takes over mouse and keyboard) | `tools\m41-window.ps1` |
 | M3.2 and M3.3 checks: the widget panel (pin from the launcher, Ctrl+Shift+B, resize, reorder, restart, S9; about 2 minutes, takes over mouse and keyboard) | `tools\m32-panel.ps1` |
 | M3.1 checks: tools in the launcher, page selection, copy, S7 (one pane) and S9 (about 2 minutes, takes over mouse and keyboard) | `tools\m31-tools.ps1` |
 | M2.3 checks: Home Screen entries and ranking by use (about 2 minutes, takes over mouse and keyboard) | `tools\m23-entries.ps1` |

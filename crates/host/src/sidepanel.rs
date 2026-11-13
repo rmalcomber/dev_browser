@@ -79,8 +79,14 @@ pub fn apply(open: bool, width: i32, focus: bool) {
     let (Some(view), Some(ctl)) = (view, ctl) else {
         return;
     };
-    ctl.set_visible(i32::from(open));
-    view.set_visible(i32::from(open));
+    // always visible: the panel when it is open, its narrow rail (with a button to open it) when it is collapsed. Shown once only: showing a
+    // view that is already visible takes the keyboard from whoever has it.
+    // (when the keyboard is asked for, it is shown again on purpose: that is what activates it)
+    let first = !state::with(|s| std::mem::replace(&mut s.side_shown, true));
+    if first || (open && focus) {
+        ctl.set_visible(1);
+        view.set_visible(1);
+    }
     if open {
         // showing a view can move the keyboard into it: give it back to where it was (the launcher if that is open, else the page)
         // (a moment later: the window finishes activating the new view after this call returns)
@@ -131,9 +137,7 @@ pub fn place() {
     let (Some(ctl), Some(window)) = (ctl, window) else {
         return;
     };
-    if !open {
-        return;
-    }
+    let width = if open { width } else { layout::SIDE_RAIL };
     let z = window.size();
     let (x, y, w, h) = bounds((z.width, z.height), width);
     ctl.set_bounds(Some(&Rect {

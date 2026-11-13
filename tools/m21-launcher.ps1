@@ -56,7 +56,7 @@ try {
   # ---- B
   Write-Host 'Dragging'
   [void](Open-Launcher $app)
-  $c = Get-Client $app; $left = [int](($c.W - 640) / 2)
+  $c = Get-Client $app; $left = [int](($c.W - 32 - 640) / 2)   # the collapsed widget panel (a 32 px rail) is not part of the launcher area
   Drag-Client $app ($left + 200) 39 ($left + 300) 99
   [void](Close-Launcher $app)
   $pos = Last-Launcher-Pos $app

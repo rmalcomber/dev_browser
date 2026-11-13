@@ -37,9 +37,11 @@ The longer description follows.
 tabs, groups, bookmarks, history, Home Screen entries and tools of the workspaces you are working in, and nothing else.
 You can widen the search deliberately; it narrows again when you close the launcher. `Ctrl+D` bookmarks the focused page.
 
-## Tools (first five work today)
+## Tools (twenty work today)
 
-From the launcher: a **JWT decoder**, a **JSON formatter**, **Base64**, **URL parts and encoding** and a **UUID generator**. Select a token on a page, press `Ctrl+P`, and the decoder is the first result and starts from your selection: read the header, every claim, the times (as dates, with how long ago or to go), and copy one value. Nothing is verified, stored or logged; the tool is only given the text, never your tabs, cookies or storage.
+From the launcher, or pinned in the widget panel: a **JWT decoder**, **JSON formatter**, **Base64**, **URL parts and encoding**, **UUID generator**, **hashes** (MD5 to SHA-512), **password generator**, **calculator**, **number bases**, **byte sizes**, **Unix time and dates**, **cron expressions** (meaning and next runs), **case converter**, **word count**, **placeholder text**, **text diff**, **CSV and JSON**, **chmod and umask**, **IPv4 networks (CIDR)** and a **colour converter**. Select a token on a page, press `Ctrl+P`, and the decoder is the first result and starts from your selection: read the header, every claim, the times (as dates, with how long ago or to go), and copy one value. Nothing is verified, stored or logged; a tool is only given the text, never your tabs, cookies or storage.
+
+Not there yet: the Home Screen tools that use the network (curl, http), and the ones that need an engine or a library (regular expressions, YAML, Markdown, QR codes).
 
 The longer description follows.
 
@@ -49,7 +51,7 @@ in memory and is not saved by default. Any tool can be **pinned** to the widget 
 
 ## Widget panel (works today)
 
-A collapsible, resizable panel on the right holds pinned tools, in a section for the workspace you are in, coloured to match. Open a tool from the launcher and press **Pin**; `Ctrl+Shift+B` shows or hides the panel and puts the keyboard in it. Drag its left edge to resize it. Each widget can be collapsed, moved up or down, or unpinned, and the workspace's section can be folded; the arrow keys resize the panel when its edge has the focus. The panel, its pinned tools, their order and the folding come back after a restart; what you typed into them does not, and a token typed into one is cleared when the panel is hidden. Showing two workspaces at once comes with split view.
+A collapsible, resizable panel on the right holds pinned tools, in a section for the workspace you are in, coloured to match. Open a tool from the launcher and press **Pin**; `Ctrl+Shift+B` shows or hides the panel and puts the keyboard in it. Drag its left edge to resize it. The panel and the sidebar each collapse to a narrow rail (`Ctrl+Shift+B` and `Ctrl+B`, or the button on the rail). Each widget can be collapsed, moved up or down, or unpinned, and the workspace's section can be folded; the arrow keys resize the panel when its edge has the focus. The panel, its pinned tools, their order and the folding come back after a restart; what you typed into them does not, and a token typed into one is cleared when the panel is hidden. Showing two workspaces at once comes with split view.
 
 ## Bookmarks and history (work today)
 

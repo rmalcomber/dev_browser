@@ -61,9 +61,9 @@ pub fn default_pos(window_width: i32) -> (i32, i32) {
     (((window_width - WIDTH) / 2).max(0), TOP)
 }
 
-/// The part of the window the launcher may use: all of it, less the widget panel when that is open (so the two never overlap).
+/// The part of the window the launcher may use: all of it, less what the widget panel takes (its width, or its rail), so the two never overlap.
 fn window_size() -> Option<(i32, i32)> {
-    let side = state::with(|s| if s.side_open { s.side_width } else { 0 });
+    let side = layout::side_extent();
     // the content area (what the pages are laid out in), not the window with its frame
     state::with(|s| s.panel.clone()).map(|w| {
         let z = w.size();

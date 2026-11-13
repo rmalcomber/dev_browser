@@ -119,6 +119,8 @@ struct ToolOpened {
     description: &'static str,
     takes_input: bool,
     sensitive: bool,
+    /// The input box's placeholder: what this tool reads.
+    hint: &'static str,
     /// What to put in the input box to start: the page selection, if there is one and the tool reads input.
     input: String,
     from_selection: bool,
@@ -239,6 +241,7 @@ impl Backend {
             description: info.description,
             takes_input: info.takes_input,
             sensitive: info.sensitive,
+            hint: info.hint,
             input: input.clone(),
             from_selection,
         };

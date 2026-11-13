@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { FieldRow } from './ToolView';
 import { css } from './state';
-import { collapse, focusRequest, fold, move, resize, runWidget, sections, unpin, width, widgetState } from './panelState';
+import { collapse, focusRequest, focusWanted, fold, move, open, resize, runWidget, sections, togglePanel, unpin, width, widgetState } from './panelState';
 import type { PinnedTool } from './panelState';
 
 /** One pinned tool: a title bar, and (unless collapsed) its input and its labelled values. */
@@ -31,7 +31,7 @@ function WidgetCard({ w, first, last }: { w: PinnedTool; first: boolean; last: b
             <textarea
               class="tinput"
               aria-label={`${w.name} input`}
-              placeholder="Type or paste here"
+              placeholder={w.hint || 'Type or paste here'}
               spellcheck={false}
               value={st.input}
               onInput={(e) => runWidget(w.id, (e.currentTarget as HTMLTextAreaElement).value)}
@@ -66,12 +66,29 @@ function WidgetCard({ w, first, last }: { w: PinnedTool; first: boolean; last: b
 export function PanelApp() {
   const root = useRef<HTMLDivElement>(null);
   // the app asked for the keyboard focus: the first thing that takes input
+  // (the request can come while the panel is still a rail; it waits until the panel itself is on screen)
   useEffect(() => {
-    if (focusRequest.value === 0) return;
-    // a widget's input first, else its Generate button, else the first button
-    const el = root.current;
-    (el?.querySelector<HTMLElement>('.pwidget textarea, .pwidget button.trun') ?? el?.querySelector<HTMLElement>('button'))?.focus();
-  }, [focusRequest.value]);
+    if (focusRequest.value === 0 || !focusWanted.value || !open.value) return;
+    // a widget's input first, else its Generate button; the widgets may be a moment behind the panel opening, so look a few times
+    let tries = 12;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = () => {
+      const el = root.current;
+      const target = el?.querySelector<HTMLElement>('.pwidget textarea, .pwidget button.trun');
+      if (target) {
+        target.focus();
+        focusWanted.value = false;
+      } else if (tries-- > 0) {
+        timer = setTimeout(attempt, 30);
+      } else {
+        // nothing pinned to type into: the first button, so the keyboard is at least in the panel
+        el?.querySelector<HTMLElement>('button')?.focus();
+        focusWanted.value = false;
+      }
+    };
+    attempt();
+    return () => clearTimeout(timer);
+  }, [focusRequest.value, open.value]);
 
   // From the keyboard the same edge takes the arrow keys: left makes the panel wider, right narrower (the app clamps it and remembers it).
   const onGripKey = (e: KeyboardEvent) => {
@@ -114,7 +131,23 @@ export function PanelApp() {
       el.removeEventListener('pointerup', up);
       el.removeEventListener('pointercancel', up);
     };
-  }, []);
+    // the edge exists only while the panel is expanded (a collapsed panel is a rail without one), so listen again whenever that changes
+  }, [open.value]);
+
+  // collapsed: only a narrow rail with the way back (the panel's own page stays loaded, so what is pinned is ready the moment it opens)
+  if (!open.value) {
+    const count = sections.value.reduce((n, s) => n + s.widgets.length, 0);
+    return (
+      <div class="prail" role="complementary" aria-label="Pinned tools (collapsed)">
+        <button type="button" class="expand" aria-label="Show the widget panel" title="Show the widget panel (Ctrl+Shift+B)" onClick={togglePanel}>
+          ◂
+        </button>
+        <span class="prailtext" aria-hidden="true">
+          Pinned tools{count ? ` (${count})` : ''}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div class="panel" ref={root} role="complementary" aria-label="Pinned tools">
@@ -130,6 +163,12 @@ export function PanelApp() {
         onKeyDown={onGripKey}
       />
       <div class="pmain">
+        <div class="ptop">
+          <strong>Pinned tools</strong>
+          <button type="button" class="collapse" aria-label="Collapse the widget panel" title="Collapse the widget panel (Ctrl+Shift+B)" onClick={togglePanel}>
+            ▸
+          </button>
+        </div>
         {sections.value.map((s) => {
           const isFolded = s.folded;
           return (

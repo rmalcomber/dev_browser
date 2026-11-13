@@ -27,6 +27,7 @@ import {
   renameGroup,
   renameWorkspace,
   runCommand,
+  sidebarCollapsed,
   sectionOf,
   selectTab,
   sidebarFocus,
@@ -326,6 +327,34 @@ function NavBar() {
   );
 }
 
+/** The sidebar collapsed to a rail: the way back, the workspaces as icons only (no names, no tabs, no titles), and a new tab. */
+function Rail() {
+  return (
+    <nav class="rail" aria-label="Workspaces (collapsed sidebar)">
+      <button type="button" class="expand" aria-label="Expand the sidebar" title="Expand the sidebar (Ctrl+B)" onClick={() => runCommand('sidebar.toggle')}>
+        ▸
+      </button>
+      {workspaces.value.map((w) => (
+        <button
+          type="button"
+          class={`railws ${w.id === activeWorkspace.value ? 'active' : ''}`}
+          aria-label={w.name}
+          title={w.name}
+          aria-current={w.id === activeWorkspace.value ? 'true' : undefined}
+          onClick={() => activateWorkspace(w.id)}
+        >
+          <span class="icon" style={{ background: css(w.colour) }} aria-hidden="true">
+            {initial(w.name)}
+          </span>
+        </button>
+      ))}
+      <button type="button" class="railtab" aria-label="New tab" title="New tab (Ctrl+T)" onClick={() => runCommand('tab.new')}>
+        +
+      </button>
+    </nav>
+  );
+}
+
 export function Sidebar() {
   const [mode, setMode] = useState<Mode>('none');
   const [newColour, setNewColour] = useState(PALETTE[0]);
@@ -354,10 +383,15 @@ export function Sidebar() {
     setMode('new');
   }, [newWorkspaceRequest.value]);
 
+  if (sidebarCollapsed.value) return <Rail />;
+
   return (
     <nav class="sidebar" aria-label="Workspaces and tabs" onKeyDown={navigate}>
       <h1>
         The Dev Browser <small>alpha</small>
+        <button type="button" class="collapse" aria-label="Collapse the sidebar" title="Collapse the sidebar (Ctrl+B)" onClick={() => runCommand('sidebar.toggle')}>
+          ◂
+        </button>
       </h1>
 
       <NavBar />

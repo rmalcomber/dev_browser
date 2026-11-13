@@ -60,6 +60,8 @@ export const nav = signal<Nav | null>(null);
 export const addressFocus = signal(0);
 /** The last user-facing error from the app (a bad name, deleting the only workspace), or null. */
 export const lastError = signal<string | null>(null);
+/** Is the sidebar collapsed to a narrow rail? The app owns this (Ctrl+B, and the button); the shell only shows it. */
+export const sidebarCollapsed = signal(false);
 /** Counters bumped when the app moves focus: into the sidebar (focus a control), out to the page (close open forms), or to the new-workspace field. */
 export const sidebarFocus = signal(0);
 export const pageFocus = signal(0);
@@ -153,10 +155,11 @@ function isSection(v: unknown): v is Section {
 export function handleMessage(name: string, payload: string): void {
   try {
     if (name === 'workspaces') {
-      const s = JSON.parse(payload) as { workspaces: unknown; active: unknown };
+      const s = JSON.parse(payload) as { workspaces: unknown; active: unknown; sidebar_collapsed?: unknown };
       if (!Array.isArray(s.workspaces) || !s.workspaces.every(isWorkspace) || typeof s.active !== 'string') return;
       workspaces.value = s.workspaces;
       activeWorkspace.value = s.active;
+      sidebarCollapsed.value = s.sidebar_collapsed === true;
       lastError.value = null;
     } else if (name === 'tabs') {
       const s = JSON.parse(payload) as { sections: unknown };

@@ -8,6 +8,10 @@
 
 use serde::Serialize;
 
+mod numbers;
+mod secrets;
+mod text;
+
 pub const MAX_INPUT_BYTES: usize = 48 * 1024;
 
 /// What the launcher shows about a tool.
@@ -19,6 +23,8 @@ pub struct ToolInfo {
     pub keywords: &'static [&'static str],
     /// Does the tool read the input at all? (The UUID generator does not.)
     pub takes_input: bool,
+    /// What to put in the input box (shown as its placeholder).
+    pub hint: &'static str,
     /// Is the input usually a secret? Such input is never persisted, and a pinned widget must not store it.
     pub sensitive: bool,
 }
@@ -31,6 +37,7 @@ pub const TOOLS: &[ToolInfo] = &[
             "Decode a token: header, claims, times and expiry. Nothing is verified or stored.",
         keywords: &["jwt", "token", "bearer", "claims", "decode", "oauth"],
         takes_input: true,
+        hint: "Paste a token (it may start with Bearer)",
         sensitive: true,
     },
     ToolInfo {
@@ -39,6 +46,7 @@ pub const TOOLS: &[ToolInfo] = &[
         description: "Check JSON and show it indented or minified.",
         keywords: &["json", "format", "pretty", "minify", "validate"],
         takes_input: true,
+        hint: "Paste JSON",
         sensitive: false,
     },
     ToolInfo {
@@ -47,6 +55,7 @@ pub const TOOLS: &[ToolInfo] = &[
         description: "Decode or encode Base64 (standard and URL-safe).",
         keywords: &["base64", "encode", "decode", "b64"],
         takes_input: true,
+        hint: "Text to encode, or Base64 to decode",
         sensitive: true,
     },
     ToolInfo {
@@ -63,6 +72,7 @@ pub const TOOLS: &[ToolInfo] = &[
             "parameters",
         ],
         takes_input: true,
+        hint: "An address, a query string or some text",
         sensitive: false,
     },
     ToolInfo {
@@ -71,6 +81,152 @@ pub const TOOLS: &[ToolInfo] = &[
         description: "A fresh random (version 4) identifier in the usual spellings.",
         keywords: &["uuid", "guid", "id", "random", "generate"],
         takes_input: false,
+        hint: "",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "hash",
+        name: "Hashes",
+        description: "MD5, SHA-1, SHA-256, SHA-384 and SHA-512 of some text.",
+        keywords: &[
+            "hash", "md5", "sha1", "sha256", "sha512", "checksum", "digest",
+        ],
+        takes_input: true,
+        hint: "Text to hash",
+        sensitive: true,
+    },
+    ToolInfo {
+        id: "password",
+        name: "Password generator",
+        description: "Strong passwords, PINs and tokens with a strength estimate. Never stored.",
+        keywords: &["password", "pin", "token", "random", "secret", "generate"],
+        takes_input: true,
+        hint: "A length and flags, e.g. 24 nosymbols (all optional)",
+        sensitive: true,
+    },
+    ToolInfo {
+        id: "calc",
+        name: "Calculator",
+        description: "Maths: (2+3)*4, sqrt(16), 2^10, 7%4.",
+        keywords: &["calc", "calculator", "maths", "math", "sum", "calculate"],
+        takes_input: true,
+        hint: "e.g. (2+3)*4",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "bases",
+        name: "Number bases",
+        description: "A number in decimal, hex, binary, octal and base 36.",
+        keywords: &[
+            "base", "bases", "hex", "binary", "octal", "decimal", "convert",
+        ],
+        takes_input: true,
+        hint: "255, 0xff, 0b1010, or 16 ff for ff in base 16",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "bytes",
+        name: "Byte sizes",
+        description: "A size in bytes and in every SI and IEC unit.",
+        keywords: &[
+            "bytes", "size", "kb", "mb", "gb", "kib", "mib", "gib", "storage",
+        ],
+        takes_input: true,
+        hint: "1536000, 1.5 GiB or 10mb",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "timestamp",
+        name: "Unix time and dates",
+        description: "Unix time, ISO dates and offsets, in UTC.",
+        keywords: &["timestamp", "unix", "epoch", "time", "date", "iso"],
+        takes_input: true,
+        hint: "now, 1700000000, 2026-11-06T12:00Z or +3d",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "cron",
+        name: "Cron expressions",
+        description: "Plain-English meaning and the next run times of a cron expression.",
+        keywords: &["cron", "schedule", "crontab"],
+        takes_input: true,
+        hint: "e.g. */15 9-17 * * 1-5",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "case",
+        name: "Case converter",
+        description: "camelCase, snake_case, kebab-case, Title Case, slugs and more, all at once.",
+        keywords: &[
+            "case", "camel", "snake", "kebab", "title", "slug", "convert",
+        ],
+        takes_input: true,
+        hint: "Text or an identifier to convert",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "count",
+        name: "Word and character count",
+        description: "Words, characters, lines, sentences and reading time.",
+        keywords: &["count", "words", "characters", "lines", "reading", "length"],
+        takes_input: true,
+        hint: "Paste text to count",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "lorem",
+        name: "Placeholder text",
+        description: "Lorem ipsum by paragraphs, sentences or words.",
+        keywords: &["lorem", "ipsum", "placeholder", "dummy", "text"],
+        takes_input: true,
+        hint: "3p, 5s or 50w (optional)",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "diff",
+        name: "Text diff",
+        description: "Compare two texts line by line.",
+        keywords: &["diff", "compare", "difference", "lines"],
+        takes_input: true,
+        hint: "The first text, a line with only ---, then the second text",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "csv",
+        name: "CSV and JSON",
+        description:
+            "Convert spreadsheet data (CSV or TSV) to JSON and a JSON array of objects back to CSV.",
+        keywords: &["csv", "tsv", "json", "convert", "spreadsheet", "table"],
+        takes_input: true,
+        hint: "Paste CSV, TSV or a JSON array of objects",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "chmod",
+        name: "Permissions (chmod, umask)",
+        description: "Unix file permissions as digits and letters, and what a umask leaves.",
+        keywords: &["chmod", "umask", "permissions", "unix", "file", "rwx"],
+        takes_input: true,
+        hint: "755, rwxr-xr-x or umask 022",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "cidr",
+        name: "IPv4 networks (CIDR)",
+        description:
+            "Network, mask, hosts and type of an IPv4 block, and whether an address is inside it.",
+        keywords: &["cidr", "subnet", "ip", "network", "mask", "ipv4"],
+        takes_input: true,
+        hint: "10.0.0.0/24, or 10.0.0.5 in 10.0.0.0/24",
+        sensitive: false,
+    },
+    ToolInfo {
+        id: "color",
+        name: "Colour converter",
+        description: "A colour as hex, RGB and HSL.",
+        keywords: &["color", "colour", "hex", "rgb", "hsl"],
+        takes_input: true,
+        hint: "#ff8800, rgb(255,136,0), hsl(32,100%,50%) or a name",
         sensitive: false,
     },
 ];
@@ -156,6 +312,21 @@ pub fn run(id: &str, input: &str, now: i64) -> Result<Output, String> {
         "base64" => base64(input),
         "url" => url_tool(input),
         "uuid" => Ok(uuid()),
+        "hash" => secrets::hash(input),
+        "password" => secrets::password(input),
+        "calc" => numbers::calc(input),
+        "bases" => numbers::bases(input),
+        "bytes" => numbers::bytes(input),
+        "timestamp" => numbers::timestamp(input, now),
+        "cron" => numbers::cron(input, now),
+        "case" => text::case(input),
+        "count" => text::count(input),
+        "lorem" => text::lorem(input),
+        "diff" => text::diff(input),
+        "csv" => text::csv(input),
+        "chmod" => numbers::chmod(input),
+        "cidr" => numbers::cidr(input),
+        "color" => numbers::color(input),
         _ => Err("there is no such tool".into()),
     }
 }
@@ -783,11 +954,70 @@ mod tests {
         assert!(!info("uuid").unwrap().takes_input);
     }
 
+    /// Every registered tool has code behind it, a name, a description and a way to find it, and a sample input that it accepts: a tool
+    /// that is listed but not wired (or wired but not listed) fails here.
+    #[test]
+    fn every_listed_tool_runs_and_ids_are_unique() {
+        let sample = |id: &str| match id {
+            "jwt" => "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln",
+            "json" => "{\"a\":1}",
+            "base64" => "aGVsbG8=",
+            "url" => "https://example.com/a?b=c",
+            "uuid" => "",
+            "hash" | "case" | "count" => "hello world",
+            "password" | "lorem" => "",
+            "calc" => "1+2",
+            "bases" => "255",
+            "bytes" => "1 KiB",
+            "timestamp" => "now",
+            "cron" => "* * * * *",
+            "diff" => {
+                "a
+---
+b"
+            }
+            "csv" => {
+                "a,b
+1,2"
+            }
+            "chmod" => "755",
+            "cidr" => "10.0.0.0/24",
+            "color" => "#fff",
+            other => panic!("no sample input for {other}: add one here"),
+        };
+        let mut seen = std::collections::HashSet::new();
+        for t in TOOLS {
+            assert!(seen.insert(t.id), "{} is listed twice", t.id);
+            assert!(
+                !t.name.is_empty() && !t.description.is_empty() && !t.keywords.is_empty(),
+                "{} is incomplete",
+                t.id
+            );
+            assert!(
+                !t.takes_input || !t.hint.is_empty() || matches!(t.id, "password" | "lorem"),
+                "{} reads input but has no hint",
+                t.id
+            );
+            let out = run(t.id, sample(t.id), 1_700_000_000)
+                .unwrap_or_else(|e| panic!("{} failed on its sample: {e}", t.id));
+            assert!(!out.fields.is_empty(), "{} gave nothing", t.id);
+        }
+        assert!(TOOLS.len() >= 20, "{} tools", TOOLS.len());
+    }
+
     /// S5, structurally: this module is a set of pure functions. It must not even name the things a tool must never reach.
     #[test]
     fn s5_the_tools_module_imports_nothing_it_could_attack_with() {
-        let source = include_str!("tools.rs");
-        let code: String = source.split("#[cfg(test)]").next().unwrap().to_string();
+        // every file of the module: the registry and each group of tools
+        let code: String = [
+            include_str!("tools.rs"),
+            include_str!("tools/text.rs"),
+            include_str!("tools/numbers.rs"),
+            include_str!("tools/secrets.rs"),
+        ]
+        .iter()
+        .map(|src| src.split("#[cfg(test)]").next().unwrap().to_string())
+        .collect();
         for forbidden in [
             "rusqlite",
             "std::fs",

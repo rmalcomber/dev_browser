@@ -78,6 +78,7 @@ struct WidgetOut {
     description: &'static str,
     takes_input: bool,
     sensitive: bool,
+    hint: &'static str,
     collapsed: bool,
 }
 
@@ -152,6 +153,7 @@ impl Backend {
                             description: t.description,
                             takes_input: t.takes_input,
                             sensitive: t.sensitive,
+                            hint: t.hint,
                             collapsed: x.collapsed,
                         })
                     })
