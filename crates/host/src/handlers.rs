@@ -51,6 +51,25 @@ wrap_load_handler! {
     }
 }
 
+/// A page's title is untrusted text. For a log line: control characters become `?` (no fake log lines) and it is cut short.
+pub fn log_safe(text: &str, max_chars: usize) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .take(max_chars)
+        .collect()
+}
+
+// Titles are logged for pages so the S6 test page can report what it saw (tools/s6-hostile-page.ps1); the title bar will use them in M1.5.
+wrap_display_handler! {
+    struct Titles { role: Role }
+    impl DisplayHandler {
+        fn on_title_change(&self, _b: Option<&mut Browser>, title: Option<&CefString>) {
+            let t = title.map(|t| t.to_string()).unwrap_or_default();
+            println!("[host] {} title: {}", self.role.name(), log_safe(&t, 600));
+        }
+    }
+}
+
 // Finding (M0): CEF's own JavaScript dialogs crashed the app when their view was destroyed while one was open. Until the real
 // dialog UI exists (M1.6 and M4) the app answers every dialog itself with the safe choice: cancel, and allow leaving a page.
 wrap_jsdialog_handler! {
@@ -95,7 +114,19 @@ wrap_client! {
         }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(Lifetime::new()) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(Loading::new(self.role)) }
+        fn display_handler(&self) -> Option<DisplayHandler> { Some(Titles::new(self.role)) }
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(Dialogs::new(self.role)) }
         fn permission_handler(&self) -> Option<PermissionHandler> { Some(Permissions::new(self.role)) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_text_cannot_forge_lines_or_run_on() {
+        assert_eq!(log_safe("a\nb\r[host] fake\t", 100), "a?b?[host] fake?");
+        assert_eq!(log_safe(&"x".repeat(1000), 600).len(), 600);
     }
 }

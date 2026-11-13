@@ -22,6 +22,7 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 | Test | `tools\build.ps1 test` |
 | Check (fmt, clippy, tests, ui build) | `tools\build.ps1 check` |
 | Build | `tools\build.ps1 build` |
+| Security check S6 (hostile page; needs a build and node) | `tools\s6-hostile-page.ps1` |
 | Docs dev | `cd docs && npm install && npm run dev` |
 | Docs build (also checks links) | `cd docs && npm run build` |
 

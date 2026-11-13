@@ -10,7 +10,7 @@ any release. None can be written until the code exists; the point now is that th
 | S3 | No global recent-results list contains cross-workspace titles or URLs. | M2 | Automated | Planned |
 | S4 | Broader scope resets to the contextual default on launcher close, and leaves no cached broader results. | M2 | Automated | Planned |
 | S5 | Tool code cannot read browser databases or Chromium session files through the exposed runtime. | M3 | Automated | Planned |
-| S6 | A visited webpage cannot invoke privileged browser IPC or reach launcher internals. | M1 | Automated + manual | Planned |
+| S6 | A visited webpage cannot invoke privileged browser IPC or reach launcher internals. | M1 | Automated + manual | First check passing (2026-11-13): `toolss6-hostile-page.ps1` |
 | S7 | `page.selection.read` binds to the focused pane and never collects from both panes. | M3/M4 | Automated | Planned |
 | S8 | Switching workspace or pane never flashes previously visible content. | M1/M4 | Manual, screen capture | Spike: no old-workspace frame after a switch, for existing, freshly created and destroyed-and-recreated views at 60 fps (white flash fixed with a dark background); real tabs still to test |
 | S9 | Token inputs (JWTs etc.) are not logged or persisted by default. | M3 | Automated (log and DB scan) | Planned |

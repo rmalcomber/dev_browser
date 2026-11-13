@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>hostile page (S6)</title>
+<!--
+  A page that behaves like a hostile website: it looks for the app's privileged binding and tries to reach the trusted shell.
+  Served over http by tools/test-server.js. It reports what it saw in its own title, which the app logs as "[host] page title: [s6] {json}".
+  Expected (every value is a pass): m0Type "undefined", m0Keys [], fetch/xhr "blocked", iframe "blocked".
+-->
+<body style="background:#400;color:#fff;font:24px sans-serif">hostile page running...
+<script>
+(function () {
+  var r = { m0Type: typeof window.m0, m0Keys: [], fetch: '?', xhr: '?', iframe: '?', topM0: typeof top.m0 };
+  try { r.m0Keys = Object.getOwnPropertyNames(window).filter(function (k) { return /m0/i.test(k); }); } catch (e) { r.m0Keys = ['error ' + e.name]; }
+
+  var pending = 3;
+  function done() {
+    if (--pending > 0) return;
+    document.title = '[s6] ' + JSON.stringify(r);
+    document.body.textContent = document.title;
+  }
+
+  // 1. fetch the shell page: it is a different origin and sends no CORS permission, so this must fail
+  fetch('app://shell/index.html').then(
+    function (resp) { r.fetch = 'LEAK status ' + resp.status; done(); },
+    function (e) { r.fetch = 'blocked'; done(); });
+
+  // 2. the same with XMLHttpRequest
+  try {
+    var x = new XMLHttpRequest();
+    x.open('GET', 'app://shell/index.html');
+    x.onload = function () { r.xhr = 'LEAK status ' + x.status; done(); };
+    x.onerror = function () { r.xhr = 'blocked'; done(); };
+    x.send();
+  } catch (e) { r.xhr = 'blocked'; done(); }
+
+  // 3. frame the shell and try to read into it: the shell must not be readable from here
+  var f = document.createElement('iframe');
+  f.src = 'app://shell/index.html';
+  document.body.appendChild(f);
+  setTimeout(function () {
+    // Leak = the shell's own content (or its binding) is readable from here. An empty or error document is not a leak.
+    try {
+      var d = f.contentWindow.document, text = (d.body && d.body.innerText) || '';
+      r.iframeUrl = d.URL;
+      r.iframe = (/Dev Browser|Ping/.test(text) || typeof f.contentWindow.m0 !== 'undefined') ? 'LEAK ' + text.slice(0, 40) : 'blocked';
+    } catch (e) { r.iframe = 'blocked'; }
+    done();
+  }, 2500);
+})();
+</script>
+</body>
