@@ -7,7 +7,7 @@
 
 use crate::{b64, ipc, state, state::NavInfo};
 use cef::*;
-use dev_browser_core::{id::Id, ipc::Reply, nav, url};
+use dev_browser_core::{errorpage, id::Id, ipc::Reply, nav, url};
 
 fn reply_for(tab: &Id, n: &NavInfo) -> Reply {
     nav::reply(tab, &n.url, &n.title, n.loading, n.can_back, n.can_forward)
@@ -41,6 +41,7 @@ pub fn shown(tab: &Id, url: &str) {
 /// A tab's view is gone: forget what was known about it.
 pub fn forget(tab: &Id) {
     state::with(|s| {
+        s.errors.remove(tab);
         s.nav.remove(tab);
         s.favicon_urls.remove(tab);
     });
@@ -91,6 +92,15 @@ pub fn forward() {
 }
 
 pub fn reload(hard: bool) {
+    // an error page reloads the address that failed, not the error page itself
+    let failed = state::with(|s| s.shown.as_ref().and_then(|t| s.errors.get(t).cloned()));
+    if let Some(failed) = failed.filter(|u| url::is_restorable(u)) {
+        if let Some(f) = shown_browser().and_then(|b| b.main_frame()) {
+            println!("[host] reloading the address that failed");
+            f.load_url(Some(&CefString::from(failed.as_str())));
+            return;
+        }
+    }
     if let Some(b) = shown_browser() {
         if hard {
             b.reload_ignore_cache();
@@ -104,6 +114,17 @@ pub fn stop() {
     if let Some(b) = shown_browser() {
         b.stop_load();
     }
+}
+
+/// Show one of the app's own error pages in a tab's browser. The tab keeps the failed address (Reload retries it).
+pub fn error_page(tab: &Id, browser: &Browser, kind: errorpage::Kind, failed: &str, detail: &str) {
+    let Some(frame) = browser.main_frame() else {
+        return;
+    };
+    state::with(|s| s.errors.insert(tab.clone(), failed.to_string()));
+    println!("[host] tab {tab}: showing an error page ({kind:?})");
+    let page = errorpage::data_url(&errorpage::html(kind, failed, detail));
+    frame.load_url(Some(&CefString::from(page.as_str())));
 }
 
 // ---- favicons ----

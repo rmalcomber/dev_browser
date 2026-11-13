@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>risky</title>
+<style>html,body{height:100%;margin:0;background:#445}</style>
+<script>
+// A page that does something risky for the browser while it is open (planning/m1-plan.md M1.6): a dialog, a permission prompt, a popup, a
+// busy loop. The checks close the tab while it is happening. The title says how far it got (the host logs titles).
+const kind = new URLSearchParams(location.search).get('kind') || '';
+const t = (s) => { document.title = 'risky-' + kind + '-' + s; };
+t('start');
+document.addEventListener('click', () => { if (kind === 'popup-click') { window.open('/nav-b.html'); t('clicked'); } });
+setTimeout(() => {
+  switch (kind) {
+    case 'alert': alert('hello'); t('after'); break;
+    case 'confirm': t('answer=' + confirm('ok?')); break;
+    case 'prompt': t('answer=' + prompt('name?')); break;
+    case 'geo': navigator.geolocation.getCurrentPosition(() => t('granted'), () => t('denied')); t('asked'); break;
+    case 'notify': Notification.requestPermission().then((r) => t('perm=' + r)); t('asked'); break;
+    case 'camera': navigator.mediaDevices.getUserMedia({ video: true }).then(() => t('granted'), () => t('denied')); t('asked'); break;
+    case 'popup': window.open('/nav-b.html'); t('opened'); break;
+    case 'unload': window.onbeforeunload = (e) => { e.preventDefault(); e.returnValue = 'x'; }; t('armed'); break;
+    case 'busy': t('busy'); for (;;) { /* never returns */ }
+  }
+}, 300);
+</script>

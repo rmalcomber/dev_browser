@@ -12,6 +12,8 @@ pub struct Config {
     pub data: DataDir,
     /// The page a new tab opens (until the launcher and address bar exist).
     pub start_url: String,
+    /// Where saved downloads go; `None` is the user's Downloads folder. (`--downloads-dir=PATH`, used by the tests.)
+    pub downloads_dir: Option<std::path::PathBuf>,
 }
 
 /// What the shell is told about a tab (the shown one): see `navigation`.
@@ -55,6 +57,13 @@ pub struct State {
     pub accents: HashMap<Id, u32>,
     /// Tabs core asked to show whose workspace profile is still starting: (workspace, tab, url).
     pub waiting: Vec<(Id, Id, String)>,
+    /// Tabs showing one of the app's own error pages, with the address that failed (Reload retries it).
+    pub errors: HashMap<Id, String>,
+    /// Downloads waiting for the user: our id, the tab, the safe file name, and CEF's callback. Dropping the callback cancels the download.
+    pub downloads: HashMap<u32, (Id, String, BeforeDownloadCallback)>,
+    pub next_download: u32,
+    /// How many times in a row the shell's renderer has died and been reloaded.
+    pub shell_crashes: u32,
     /// The tab that should be visible.
     pub shown: Option<Id>,
     /// Tabs whose view the app itself is closing, so the browser's close event is not mistaken for the page closing itself.

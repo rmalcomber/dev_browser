@@ -18,6 +18,7 @@
 use crate::address;
 use crate::commands::{self, Source};
 use crate::data::{DataDir, DataError};
+use crate::downloads;
 use crate::group;
 use crate::id::Id;
 use crate::ipc::{Refused, Reply, MAX_PAYLOAD_BYTES};
@@ -48,6 +49,11 @@ pub const GROUPS_COLLAPSE: &str = "groups.collapse";
 pub const NAV_GO: &str = "nav.go";
 pub const TABS_OPEN_IN: &str = "tabs.open_in";
 pub const COMMAND: &str = "command";
+pub const DOWNLOAD_DECIDE: &str = "download.decide";
+/// Downloads waiting for the user's answer at once; more are cancelled.
+pub const MAX_PENDING_DOWNLOADS: usize = 4;
+/// The longest notice text sent to the shell, in characters.
+pub const MAX_NOTICE_CHARS: usize = 160;
 
 /// Largest favicon, as a `data:image/png;base64,` address, that is kept and sent to the shell.
 pub const MAX_FAVICON_CHARS: usize = 32 * 1024;
@@ -107,6 +113,11 @@ pub enum Effect {
     Stop,
     /// Give keyboard focus to the address bar.
     FocusAddress,
+    /// The user answered a download offer: save it (to the app's own folder, under a safe name) or cancel it.
+    Download {
+        id: u32,
+        save: bool,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -211,6 +222,13 @@ struct MoveIn {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct DecideIn {
+    id: u32,
+    save: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GoIn {
     input: String,
 }
@@ -287,6 +305,7 @@ enum Action {
     CollapseGroup { id: Id, collapsed: bool },
     GroupTab { id: Id, group: Option<Id> },
     Command(&'static str),
+    DownloadDecide { id: u32, save: bool },
 }
 
 /// A user-facing failure (shown in the shell), as opposed to a `Refused` protocol violation.
@@ -306,6 +325,8 @@ pub struct Backend {
     live: Vec<(Id, Id)>,
     /// Favicons by tab (session only, never stored): `data:image/png;base64,` addresses the host made from the page's icon.
     favicons: HashMap<Id, String>,
+    /// Downloads offered to the user and not yet answered (ids made by the host). The shell can only answer these.
+    offers: HashSet<u32>,
     orphans_removed: Vec<Id>,
 }
 
@@ -339,6 +360,7 @@ impl Backend {
             start_url,
             live: Vec::new(),
             favicons: HashMap::new(),
+            offers: HashSet::new(),
             orphans_removed,
         })
     }
@@ -610,6 +632,69 @@ impl Backend {
         self.expanded.contains(ws).then(|| self.tabs_reply())
     }
 
+    // ---- safety nets (M1.6) ----
+
+    /// A short notice for the shell ("a dialog was dismissed"). Only for a page of the **active** workspace: a background workspace's
+    /// pages say nothing to the shell (S11). `text` is untrusted (it may contain a page's origin): flattened and cut short here.
+    pub fn notice(&self, ws: &Id, text: &str) -> Option<Reply> {
+        (ws == &self.active).then(|| Self::notice_reply(text))
+    }
+
+    fn notice_reply(text: &str) -> Reply {
+        let clean: String = text
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(MAX_NOTICE_CHARS)
+            .collect();
+        Reply {
+            name: "notice",
+            payload: serde_json::json!({ "text": clean }).to_string(),
+        }
+    }
+
+    /// A page asked for a new window (`window.open`, a link with target=_blank). Allowed only when the user caused it, for a web address,
+    /// and from a page of the active workspace: it opens as a new tab **in that same workspace**. Everything else is blocked, with a notice
+    /// when the page is in the active workspace.
+    pub fn popup(&mut self, ws: &Id, address: &str, user_gesture: bool) -> Outcome {
+        if ws != &self.active {
+            return Outcome::default();
+        }
+        let web = address.starts_with("http://") || address.starts_with("https://");
+        if user_gesture && web && url::is_restorable(address) {
+            return match self.new_tab(Some(address.to_string()), false) {
+                Ok(o) => o,
+                Err(e) => Self::user_error("popup", e),
+            };
+        }
+        Outcome {
+            replies: vec![Self::notice_reply(
+                "A page tried to open a new window without being asked; it was blocked.",
+            )],
+            effects: vec![],
+        }
+    }
+
+    /// A page started a download. `None` means cancel it now (not the active workspace, or too many waiting); otherwise the offer to show.
+    pub fn download_offer(&mut self, ws: &Id, id: u32, suggested: &str) -> Option<Reply> {
+        if ws != &self.active
+            || self.offers.len() >= MAX_PENDING_DOWNLOADS
+            || self.offers.contains(&id)
+        {
+            return None;
+        }
+        self.offers.insert(id);
+        Some(Reply {
+            name: "download",
+            payload: serde_json::json!({ "id": id, "name": downloads::safe_name(suggested) })
+                .to_string(),
+        })
+    }
+
+    /// A download is over or was dropped by the host (its tab closed): it can no longer be answered.
+    pub fn download_gone(&mut self, id: u32) {
+        self.offers.remove(&id);
+    }
+
     // ---- messages ----
 
     /// Decide what to do with one message from the shell.
@@ -788,6 +873,13 @@ impl Backend {
                     url: r.url,
                 }
             }
+            DOWNLOAD_DECIDE => {
+                let r: DecideIn = Self::from_json(name, payload)?;
+                Action::DownloadDecide {
+                    id: r.id,
+                    save: r.save,
+                }
+            }
             COMMAND => {
                 let r: IdIn = Self::from_json(name, payload)?;
                 match commands::find(&r.id) {
@@ -833,6 +925,13 @@ impl Backend {
                     workspace: id,
                     colour: w.colour,
                 }]))
+            }
+            Action::DownloadDecide { id, save } => {
+                // only an offer that is still open can be answered, once
+                if !self.offers.remove(&id) {
+                    return Err("that download is no longer waiting".into());
+                }
+                Ok(Self::just(Effect::Download { id, save }))
             }
             Action::Go(input) => {
                 // what was typed becomes an address in core (never in the shell or the host); only the selected tab can be navigated
@@ -1069,6 +1168,15 @@ impl Backend {
             "nav.reload.hard" => Ok(Self::just(Effect::Reload { hard: true })),
             "nav.stop" => Ok(Self::just(Effect::Stop)),
             "nav.address" => Ok(Self::just(Effect::FocusAddress)),
+            "download.save" | "download.cancel" => {
+                let save = id == "download.save";
+                // the oldest waiting offer (the lowest id); nothing waiting is not an error
+                let Some(offer) = self.offers.iter().min().copied() else {
+                    return Ok(Outcome::default());
+                };
+                self.offers.remove(&offer);
+                Ok(Self::just(Effect::Download { id: offer, save }))
+            }
             "tab.discard" => self.discard_background(),
             "tab.group.new" => {
                 let current = self.current(&ws)?;
@@ -2584,5 +2692,110 @@ mod tests {
         send(&mut b, ACTIVATE, json!({"id": other}));
         send(&mut b, DELETE, json!({"id": two.as_str()}));
         assert!(b.favicons.is_empty());
+    }
+
+    fn second_workspace(b: &mut Backend) -> Id {
+        let first = b.active().clone();
+        send(b, CREATE, json!({"name": "Two", "colour": 0xa78bfa}));
+        let two = b.active().clone();
+        assert_ne!(first, two);
+        two
+    }
+
+    #[test]
+    fn a_popup_the_user_asked_for_opens_a_tab_in_the_same_workspace() {
+        let (_t, mut b) = backend("popup-ok");
+        let ws = b.active().clone();
+        let before = tab_urls(&mut b).len();
+        let o = b.popup(&ws, "https://popup.example/x", true);
+        assert!(o
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::Show { workspace, .. } if workspace == &ws)));
+        assert_eq!(tab_urls(&mut b).len(), before + 1);
+        assert!(tab_urls(&mut b).contains(&"https://popup.example/x".to_string()));
+    }
+
+    #[test]
+    fn popups_without_a_gesture_or_with_odd_addresses_are_blocked_with_a_notice() {
+        let (_t, mut b) = backend("popup-blocked");
+        let ws = b.active().clone();
+        let before = tab_urls(&mut b).len();
+        for (url, gesture) in [
+            ("https://a.example/", false),
+            ("javascript:alert(1)", true),
+            ("file:///c:/x", true),
+            ("data:text/html,x", true),
+            ("about:blank", true),
+        ] {
+            let o = b.popup(&ws, url, gesture);
+            assert!(o.effects.is_empty(), "{url}");
+            assert_eq!(o.replies[0].name, "notice");
+        }
+        assert_eq!(tab_urls(&mut b).len(), before);
+    }
+
+    #[test]
+    fn a_background_workspace_cannot_open_tabs_or_make_notices() {
+        let (_t, mut b) = backend("popup-background");
+        let first = b.active().clone();
+        let _two = second_workspace(&mut b);
+        let o = b.popup(&first, "https://a.example/", true);
+        assert_eq!(o, Outcome::default());
+        assert!(b.notice(&first, "hello").is_none());
+        assert!(b.download_offer(&first, 1, "f.txt").is_none());
+    }
+
+    #[test]
+    fn notices_are_flattened_and_cut() {
+        let (_t, b) = backend("notice");
+        let ws = b.active().clone();
+        let r = b
+            .notice(
+                &ws,
+                &format!(
+                    "a
+b{}",
+                    "x".repeat(1000)
+                ),
+            )
+            .unwrap();
+        let v: Value = serde_json::from_str(&r.payload).unwrap();
+        let text = v["text"].as_str().unwrap();
+        assert!(text.starts_with("a b"));
+        assert_eq!(text.chars().count(), MAX_NOTICE_CHARS);
+    }
+
+    #[test]
+    fn a_download_can_be_answered_once_and_only_if_offered() {
+        let (_t, mut b) = backend("download");
+        let ws = b.active().clone();
+        let r = b.download_offer(&ws, 7, r"..\..\evil.exe").unwrap();
+        let v: Value = serde_json::from_str(&r.payload).unwrap();
+        assert_eq!(v["name"], "evil.exe");
+        // the shell cannot answer an id that was never offered
+        let o = send(&mut b, DOWNLOAD_DECIDE, json!({"id": 8, "save": true}));
+        assert_eq!(first_reply(&o).0, "error");
+        let o = send(&mut b, DOWNLOAD_DECIDE, json!({"id": 7, "save": true}));
+        assert_eq!(o.effects, vec![Effect::Download { id: 7, save: true }]);
+        // and not twice
+        let o = send(&mut b, DOWNLOAD_DECIDE, json!({"id": 7, "save": true}));
+        assert_eq!(first_reply(&o).0, "error");
+        // a path cannot be smuggled in
+        assert!(b
+            .handle(DOWNLOAD_DECIDE, r#"{"id":1,"save":true,"path":"c:/x"}"#)
+            .is_err());
+    }
+
+    #[test]
+    fn only_a_few_downloads_wait_at_once() {
+        let (_t, mut b) = backend("download-cap");
+        let ws = b.active().clone();
+        for id in 0..MAX_PENDING_DOWNLOADS as u32 {
+            assert!(b.download_offer(&ws, id, "f").is_some());
+        }
+        assert!(b.download_offer(&ws, 99, "f").is_none());
+        b.download_gone(0);
+        assert!(b.download_offer(&ws, 99, "f").is_some());
     }
 }

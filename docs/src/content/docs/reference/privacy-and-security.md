@@ -19,6 +19,14 @@ These are rules the implementation must meet. Each has a matching acceptance tes
 - Collapsed workspaces show only a name and icon.
 - Sensitive tool input (JWTs, tokens) stays in memory and is not logged or saved by default.
 
+## What the browser refuses
+
+- **Certificate errors are never bypassed.** A site whose certificate is not trusted gets the browser's own error page, with no way past it. Nothing is sent to the site.
+- **Popups** open only when you caused them (a click) and only as a tab in the same workspace; others are blocked and you are told.
+- **Dialogs and permission requests** (alert, confirm, geolocation, notifications, camera) are dismissed or denied for now, with a notice in the sidebar. Real prompts come later.
+- **Downloads** wait for your answer (Save or Cancel). They go to your Downloads folder under a safe file name and never overwrite an existing file.
+- **A crashed page** shows an error page in its own tab; the other tabs are not affected.
+
 ## Trust tiers
 
 1. **Browser core**: Chromium sessions, navigation, permissions, storage, OS integration.

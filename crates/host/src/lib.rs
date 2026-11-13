@@ -3,6 +3,7 @@
 
 mod app;
 mod b64;
+mod downloads;
 mod handlers;
 mod ipc;
 mod keys;

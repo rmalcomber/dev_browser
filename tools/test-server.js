@@ -7,6 +7,8 @@ const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 http.createServer((req, res) => {
   const name = decodeURIComponent(req.url.split('?')[0].replace(/^\//, ''));
   if (!/^[A-Za-z0-9_.-]+$/.test(name) || name.startsWith('.')) { res.writeHead(404); return res.end('not found'); }
+  // a download: the browser is told to save it rather than show it
+  if (name === 'download.bin') { res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="report.txt"' }); return res.end('downloaded content'); }
   fs.readFile(path.join(dir, name), (err, data) => {
     if (err) { res.writeHead(404); return res.end('not found'); }
     // ?delay=<ms> holds the response back (up to 20 s), to test loading and stopping

@@ -6,6 +6,7 @@
 //! rule; checked with `tools\record.ps1`).
 
 use crate::{
+    downloads,
     handlers::{HostClient, Role},
     ipc, layout, navigation, profile, state,
     state::TabView,
@@ -38,6 +39,7 @@ pub fn execute(effect: Effect) {
         Effect::Reload { hard } => navigation::reload(hard),
         Effect::Stop => navigation::stop(),
         Effect::NewWorkspaceForm => focus_shell("new-workspace"),
+        Effect::Download { id, save } => downloads::decide(id, save),
     }
 }
 
@@ -255,6 +257,7 @@ fn destroy_view(tab: &Id) {
     });
     println!("[host] tab {tab}: view destroyed");
     navigation::forget(tab);
+    downloads::tab_closed(tab);
     if let Some(tv) = removed {
         close_view(&tv.wrapper, &tv.view);
     }

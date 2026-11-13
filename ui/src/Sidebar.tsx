@@ -16,6 +16,10 @@ import {
   initial,
   isExpanded,
   lastError,
+  notices,
+  offers,
+  dismissNotice,
+  decideDownload,
   newWorkspaceRequest,
   openTab,
   pageFocus,
@@ -365,6 +369,25 @@ export function Sidebar() {
       </ul>
 
       <div class="footer">
+        {offers.value.map((o) => (
+          <div class="offer" role="group" aria-label="Download waiting">
+            <span class="offer-name">Download {o.name}?</span>
+            <button type="button" onClick={() => decideDownload(o.id, true)} title="Save (Ctrl+Shift+S)">
+              Save
+            </button>
+            <button type="button" onClick={() => decideDownload(o.id, false)} title="Cancel (Ctrl+Shift+X)">
+              Cancel
+            </button>
+          </div>
+        ))}
+        {notices.value.map((n, i) => (
+          <p class="notice" role="status">
+            {n}{' '}
+            <button type="button" class="linkish" aria-label="Dismiss this notice" onClick={() => dismissNotice(i)}>
+              ×
+            </button>
+          </p>
+        ))}
         {lastError.value && (
           <p class="error" role="alert">
             {lastError.value}

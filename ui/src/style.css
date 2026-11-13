@@ -56,3 +56,9 @@ input { font: inherit; color: #eee; background: #252526; border: 1px solid #4a4a
 .fav.blank { display: inline-block; background: #3c3c3c; }
 .tab { display: flex; align-items: center; }
 .openin { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* notices and download offers sit at the top of the footer */
+.notice { margin: 0; color: #e0c36a; line-height: 1.4; font-size: 0.9em; }
+.offer { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.offer-name { flex: 1 1 100%; word-break: break-all; }
+.linkish { background: none; border: 0; color: inherit; cursor: pointer; padding: 0 4px; }

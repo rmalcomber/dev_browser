@@ -33,6 +33,8 @@ The Dev Browser is keyboard-first: every action is a named command with a defaul
 | `F5` or `Ctrl+R` | Reload |
 | `Ctrl+Shift+R` | Reload, ignoring the cache |
 | `Ctrl+.` | Stop loading |
+| `Ctrl+Shift+S` | Save the download that is waiting for an answer |
+| `Ctrl+Shift+X` | Cancel the download that is waiting for an answer |
 | `Alt+N` | New workspace (opens the name field in the sidebar) |
 | `Alt+PageDown` | Next workspace |
 | `Alt+PageUp` | Previous workspace |

@@ -33,6 +33,7 @@ unlocked interactive desktop: **leave the mouse and keyboard alone while one run
 | Script | What it does |
 | --- | --- |
 | `s6-hostile-page.ps1` | S6: a hostile page cannot see `window.m0` or reach `app://shell`. Needs node. Exit code 0 = pass. |
+| `m16-safety.ps1` | M1.6 checks: eight kinds of risky page closed while active (dialogs, permission prompts, `beforeunload`, an endless loop), popups, an error page and Reload, S12 (self-signed https; no request reaches the server), downloads (Save, Cancel, no overwrite) and killed renderer processes. About 3 minutes; needs node and openssl. |
 | `m15-navigation.ps1` | M1.5 checks: typing an address and a search, a link click, Back, Forward, Reload, `javascript:` refused, Stop on a slow load (with a control), the page icon, browsing in a second workspace, and S10 in both directions. About 2 minutes; needs node. |
 | `m14-sidebar.ps1` | M1.4 checks: every page framed in its workspace colour (sampled from a screenshot), the frame follows switches and recolouring, the chevron expands without switching, clicking another workspace's tab switches to it, the group shortcuts run. Needs node. |
 | `s8-switch.ps1` | S8: three workspaces in three colours, 9 `Alt+PageDown` switches recorded at 60 fps; frames must go round in order with none of the previous workspace coming back, then new-tab and close-tab churn. Needs ffmpeg and node. |
@@ -48,7 +49,6 @@ analyser sees changes. Keep pictures out of the repository.
 
 ## What was left behind with the spike
 
-The M0 spike (`spike/`) was deleted once M1.1 landed. The last commit that still has it is `ac6960c`. Its scripts for the media
-permission store, the `getUserMedia` wrapper and the destroy-while-busy checks (`busy`, `midload`, `permanswer`, `mediastore`,
-`revoke`, `wrapper`) are not ported: they belong to M1.6 and M4 and will be rebuilt against the production code. Read them with
+The M0 spike (`spike/`) was deleted once M1.1 landed. The last commit that still has it is `ac6960c`. The destroy-while-busy and permission checks were rebuilt against the production code in M1.6 (`m16-safety.ps1`). The media permission store, the
+`getUserMedia` wrapper and the revoke checks (`mediastore`, `revoke`, `wrapper`) are not ported: they belong to M4. Read them with
 `git show ac6960c:spike/<name>`.

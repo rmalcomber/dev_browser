@@ -29,6 +29,7 @@ fn child_config() -> Config {
     Config {
         data: DataDir::unopened(std::env::temp_dir()),
         start_url: String::new(),
+        downloads_dir: None,
     }
 }
 
@@ -46,5 +47,6 @@ fn start(args: &[String]) -> Result<Config, String> {
     Ok(Config {
         start_url: flag("url").unwrap_or_else(|| "https://example.com/".to_string()),
         data,
+        downloads_dir: flag("downloads-dir").map(PathBuf::from),
     })
 }

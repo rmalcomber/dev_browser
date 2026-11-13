@@ -1,9 +1,10 @@
 //! Client handlers, split by concern. Every browser view in the app uses `HostClient`; what differs (trusted shell or ordinary page, and
 //! for a page which workspace and tab it belongs to) is carried in the client.
 
-use crate::{ipc, keys, navigation, pages, state};
+use crate::{downloads, ipc, keys, navigation, pages, state};
 use cef::*;
 use dev_browser_core::commands::{self, Source};
+use dev_browser_core::errorpage::{self, Kind};
 use dev_browser_core::id::Id;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,11 +37,25 @@ wrap_life_span_handler! {
         fn on_after_created(&self, b: Option<&mut Browser>) {
             if let Some(b) = b { state::with(|s| s.browsers.push(b.clone())); }
         }
+        // Popup policy: the native popup window is never made. A popup the user asked for (a click) to a web address becomes a new tab of
+        // the same workspace, decided in core; anything else is blocked with a notice.
+        fn on_before_popup(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, _popup_id: i32, target_url: Option<&CefString>, _name: Option<&CefString>,
+            _disposition: WindowOpenDisposition, user_gesture: i32, _features: Option<&PopupFeatures>, _wi: Option<&mut WindowInfo>, _client: Option<&mut Option<Client>>,
+            _settings: Option<&mut BrowserSettings>, _extra: Option<&mut Option<DictionaryValue>>, _nojs: Option<&mut i32>) -> i32 {
+            let url = target_url.map(|u| u.to_string()).unwrap_or_default();
+            println!("[host] popup requested (user gesture: {}): {}", user_gesture != 0, log_safe(&url, 200));
+            if !self.tab.is_empty() {
+                let mut task = PopupTask::new(self.workspace.clone(), url, user_gesture != 0);
+                post_task(ThreadId::UI, Some(&mut task));
+            }
+            1
+        }
         fn on_before_close(&self, b: Option<&mut Browser>) {
             let Some(mut b) = b.cloned() else { return };
             state::with(|s| {
                 if let Some(i) = s.browsers.iter().position(|x| x.is_same(Some(&mut b)) != 0) { s.browsers.remove(i); }
             });
+            if let Ok(tab) = Id::parse(&self.tab) { downloads::tab_closed(&tab); }
             if !self.tab.is_empty() { pages::browser_closed(&self.workspace, &self.tab); }
             let (left, window) = state::with(|s| (s.browsers.len(), s.window.clone()));
             if left == 0 { if let Some(w) = window { w.close(); } }
@@ -64,9 +79,19 @@ wrap_load_handler! {
             let Some(f) = frame else { return };
             if f.is_main() == 1 { println!("[host] {} loaded (status {status}): {}", self.role.name(), CefString::from(&f.url())); }
         }
-        fn on_load_error(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>, code: Errorcode, text: Option<&CefString>, url: Option<&CefString>) {
+        fn on_load_error(&self, b: Option<&mut Browser>, frame: Option<&mut Frame>, code: Errorcode, text: Option<&CefString>, url: Option<&CefString>) {
             let Some(f) = frame else { return };
-            if f.is_main() == 1 { eprintln!("[host] {} failed to load {:?}: {code:?} {:?}", self.role.name(), url.map(|u| u.to_string()), text.map(|t| t.to_string())); }
+            if f.is_main() != 1 { return }
+            let failed = url.map(|u| u.to_string()).unwrap_or_default();
+            let detail = text.map(|t| t.to_string()).unwrap_or_default();
+            let raw: sys::cef_errorcode_t = code.into();
+            let number = raw as i32;
+            eprintln!("[host] {} page failed to load {}: error {number} {}", self.role.name(), log_safe(&failed, 200), log_safe(&detail, 100));
+            // a load the app or the page itself cancelled (a new navigation, Stop) is not an error to show; nor is our own error page
+            if number == -3 || errorpage::is_error_page(&failed) || self.role != Role::Page { return }
+            let (Some(b), Ok(tab)) = (b, Id::parse(&self.tab)) else { return };
+            let kind = if errorpage::is_certificate_error(number) { Kind::Certificate } else { Kind::Load };
+            navigation::error_page(&tab, b, kind, &failed, &format!("{detail} ({number})"));
         }
     }
 }
@@ -97,7 +122,10 @@ wrap_display_handler! {
             if self.tab.is_empty() { return }
             if frame.map(|f| f.is_main()) != Some(1) { return }
             let u = url.map(|u| u.to_string()).unwrap_or_default();
+            // the app's own error page: the tab keeps the address that failed
+            if errorpage::is_error_page(&u) { return }
             let (Ok(ws), Ok(tab)) = (Id::parse(&self.workspace), Id::parse(&self.tab)) else { return };
+            state::with(|s| s.errors.remove(&tab));
             navigation::update(&tab, |n| n.url = u.clone());
             let push = state::with(|s| s.backend.as_mut().and_then(|b| b.tab_url(&ws, &tab, &u)));
             if let Some(r) = push { ipc::push_to_shell(r.name, &r.payload); }
@@ -148,10 +176,74 @@ wrap_resource_request_handler! {
 }
 
 wrap_request_handler! {
-    struct Requests { role: Role }
+    struct Requests { role: Role, workspace: String, tab: String }
     impl RequestHandler {
+        // A certificate error is never bypassed: returning 0 cancels the request, and the load error that follows shows the error page (S12).
+        fn on_certificate_error(&self, _b: Option<&mut Browser>, cert_error: Errorcode, request_url: Option<&CefString>, _ssl: Option<&mut Sslinfo>, _cb: Option<&mut Callback>) -> i32 {
+            eprintln!("[host] {} certificate error {cert_error:?} for {}: the request is cancelled", self.role.name(), log_safe(&request_url.map(|u| u.to_string()).unwrap_or_default(), 200));
+            0
+        }
+        // The page's process died. A page gets the crash page (its tab and every other tab are unaffected); the shell is reloaded, a few
+        // times at most so a shell that crashes at once does not loop.
+        fn on_render_process_terminated(&self, b: Option<&mut Browser>, status: TerminationStatus, _code: i32, _text: Option<&CefString>) {
+            eprintln!("[host] {} renderer process ended: {status:?}", self.role.name());
+            let Some(b) = b else { return };
+            match self.role {
+                Role::Page => {
+                    let Ok(tab) = Id::parse(&self.tab) else { return };
+                    let failed = state::with(|s| s.errors.get(&tab).cloned().or_else(|| s.nav.get(&tab).map(|n| n.url.clone()))).unwrap_or_default();
+                    navigation::error_page(&tab, b, Kind::Crashed, &failed, "the page's process ended");
+                }
+                Role::Shell => {
+                    let n = state::with(|s| { s.shell_crashes += 1; s.shell_crashes });
+                    if n <= 3 { eprintln!("[host] reloading the shell (attempt {n})"); b.reload(); } else { eprintln!("[host] the shell keeps crashing: not reloading it again"); }
+                }
+            }
+        }
         fn resource_request_handler(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, _r: Option<&mut Request>, _nav: i32, _dl: i32, _init: Option<&CefString>, _disable: Option<&mut i32>) -> Option<ResourceRequestHandler> {
             Some(Protocols::new(self.role))
+        }
+    }
+}
+
+/// Tell the shell something about a page of this workspace (core decides whether the workspace may speak: the active one only).
+pub fn tell(workspace: &str, text: &str) {
+    let Ok(ws) = Id::parse(workspace) else { return };
+    let reply = state::with(|s| s.backend.as_ref().and_then(|b| b.notice(&ws, text)));
+    if let Some(r) = reply {
+        ipc::push_to_shell(r.name, &r.payload);
+    }
+}
+
+/// A page's origin, for a notice: the text is the page's own, so it is short and plain.
+fn origin_label(origin: Option<&CefString>) -> String {
+    log_safe(&origin.map(|o| o.to_string()).unwrap_or_default(), 60)
+}
+
+wrap_task! {
+    struct PopupTask { workspace: String, url: String, gesture: bool }
+    impl Task {
+        fn execute(&self) {
+            let Ok(ws) = Id::parse(&self.workspace) else { return };
+            let outcome = state::with(|s| s.backend.as_mut().map(|b| b.popup(&ws, &self.url, self.gesture)));
+            if let Some(o) = outcome { pages::deliver(o); }
+        }
+    }
+}
+
+wrap_download_handler! {
+    struct Downloads { workspace: String, tab: String }
+    impl DownloadHandler {
+        // The trait's default answer is 0: no download is ever allowed. A page may start one (it is then held for the user's answer); the shell may not.
+        fn can_download(&self, _b: Option<&mut Browser>, _url: Option<&CefString>, _method: Option<&CefString>) -> i32 { i32::from(!self.tab.is_empty()) }
+        fn on_before_download(&self, _b: Option<&mut Browser>, _item: Option<&mut DownloadItem>, suggested_name: Option<&CefString>, cb: Option<&mut BeforeDownloadCallback>) -> i32 {
+            let (Some(cb), Some(name)) = (cb, suggested_name) else { return 0 };
+            downloads::offer(&self.workspace, &self.tab, &name.to_string(), cb)
+        }
+        fn on_download_updated(&self, _b: Option<&mut Browser>, item: Option<&mut DownloadItem>, _cb: Option<&mut DownloadItemCallback>) {
+            let Some(item) = item else { return };
+            if item.is_complete() != 0 { println!("[host] a download finished"); }
+            else if item.is_canceled() != 0 { println!("[host] a download was cancelled"); }
         }
     }
 }
@@ -159,10 +251,11 @@ wrap_request_handler! {
 // Finding (M0): CEF's own JavaScript dialogs crashed the app when their view was destroyed while one was open. Until the real
 // dialog UI exists (M1.6 and M4) the app answers every dialog itself with the safe choice: cancel, and allow leaving a page.
 wrap_jsdialog_handler! {
-    struct Dialogs { role: Role }
+    struct Dialogs { role: Role, workspace: String }
     impl JsdialogHandler {
         fn on_jsdialog(&self, _b: Option<&mut Browser>, origin: Option<&CefString>, _t: JsdialogType, _m: Option<&CefString>, _d: Option<&CefString>, cb: Option<&mut JsdialogCallback>, _suppress: Option<&mut i32>) -> i32 {
             eprintln!("[host] {} dialog from {:?} cancelled by the app", self.role.name(), origin.map(|o| o.to_string()));
+            if self.role == Role::Page { tell(&self.workspace, &format!("A dialog from {} was dismissed.", origin_label(origin))); }
             if let Some(cb) = cb { cb.cont(0, Some(&CefString::from(""))); }
             1
         }
@@ -175,15 +268,17 @@ wrap_jsdialog_handler! {
 
 // Permission prompts are denied until the app has its own prompt UI (M1.6 safe default, M4 real prompts).
 wrap_permission_handler! {
-    struct Permissions { role: Role }
+    struct Permissions { role: Role, workspace: String }
     impl PermissionHandler {
         fn on_show_permission_prompt(&self, _b: Option<&mut Browser>, _id: u64, origin: Option<&CefString>, _perms: u32, cb: Option<&mut PermissionPromptCallback>) -> i32 {
             eprintln!("[host] {} permission prompt from {:?} denied by default", self.role.name(), origin.map(|o| o.to_string()));
+            if self.role == Role::Page { tell(&self.workspace, &format!("{} asked for a permission; it was denied.", origin_label(origin))); }
             if let Some(cb) = cb { cb.cont(PermissionRequestResult::DENY); }
             1
         }
         fn on_request_media_access_permission(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, origin: Option<&CefString>, _perms: u32, cb: Option<&mut MediaAccessCallback>) -> i32 {
             eprintln!("[host] {} camera/microphone request from {:?} denied by default", self.role.name(), origin.map(|o| o.to_string()));
+            if self.role == Role::Page { tell(&self.workspace, &format!("{} asked for the camera or microphone; it was denied.", origin_label(origin))); }
             if let Some(cb) = cb { cb.cancel(); }
             1
         }
@@ -203,9 +298,10 @@ wrap_client! {
         fn load_handler(&self) -> Option<LoadHandler> { Some(Loading::new(self.role, self.tab.clone())) }
         fn display_handler(&self) -> Option<DisplayHandler> { Some(Titles::new(self.role, self.workspace.clone(), self.tab.clone())) }
         fn keyboard_handler(&self) -> Option<KeyboardHandler> { Some(Keys::new(self.role)) }
-        fn request_handler(&self) -> Option<RequestHandler> { Some(Requests::new(self.role)) }
-        fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(Dialogs::new(self.role)) }
-        fn permission_handler(&self) -> Option<PermissionHandler> { Some(Permissions::new(self.role)) }
+        fn request_handler(&self) -> Option<RequestHandler> { Some(Requests::new(self.role, self.workspace.clone(), self.tab.clone())) }
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(Dialogs::new(self.role, self.workspace.clone())) }
+        fn permission_handler(&self) -> Option<PermissionHandler> { Some(Permissions::new(self.role, self.workspace.clone())) }
+        fn download_handler(&self) -> Option<DownloadHandler> { Some(Downloads::new(self.workspace.clone(), self.tab.clone())) }
     }
 }
 

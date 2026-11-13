@@ -141,6 +141,10 @@ chosen folder or cancel). The media decision store and the capture-stop wrapper 
 **Done when:** the M0 destroy-on-busy-page and permission checks pass against the production code, and no page can crash the app
 with a dialog or prompt open.
 
+**Status: done 2026-11-13** (see the M1.6 entry in `docs/ai/decisions.md`). Error pages for load failures, certificate errors and crashes
+(`errorpage.rs`), the shell reloaded after a crash, popup policy, notices, minimal downloads (`downloads.rs`). `tools\m16-safety.ps1` runs the
+M0 destroy-while-risky scenarios against the production code, the crash, S12 and the downloads on the real window.
+
 ### M1.7 Restore, exit test and hardening (M)
 Persist and restore the window, workspaces and tabs after a restart or an unclean exit; the M1 exit scenario on a real site with two
 real accounts; the S6, S8, S10, S11 and S12 checks run together; a short soak (hours open, many tabs); docs and the release page

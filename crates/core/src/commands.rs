@@ -186,6 +186,16 @@ pub const COMMANDS: &[Command] = &[
     ),
     cmd!("nav.stop", "Stop loading", ["ctrl+."]),
     cmd!("nav.address", "Go to the address bar", ["ctrl+l"]),
+    cmd!(
+        "download.save",
+        "Save the download that is waiting",
+        ["ctrl+shift+s"]
+    ),
+    cmd!(
+        "download.cancel",
+        "Cancel the download that is waiting",
+        ["ctrl+shift+x"]
+    ),
     cmd!("workspace.new", "New workspace", ["alt+n"]),
     cmd!("workspace.next", "Next workspace", ["alt+pagedown"]),
     cmd!("workspace.prev", "Previous workspace", ["alt+pageup"]),

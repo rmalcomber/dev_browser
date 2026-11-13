@@ -65,6 +65,16 @@ export const sidebarFocus = signal(0);
 export const pageFocus = signal(0);
 export const newWorkspaceRequest = signal(0);
 
+/** Short messages from the app about pages that were stopped (a dialog dismissed, a permission denied, a popup blocked). Newest last. */
+export const notices = signal<string[]>([]);
+export const MAX_NOTICES = 5;
+/** Downloads waiting for an answer. The app picks the folder and checks the file name; the shell only says save or cancel. */
+export interface DownloadOffer {
+  id: number;
+  name: string;
+}
+export const offers = signal<DownloadOffer[]>([]);
+
 /** Colours offered when making or recolouring a workspace. */
 export const PALETTE = [0x2c5fa8, 0xa78bfa, 0xf4a261, 0x2ecc71, 0xe76f51, 0x8fdde8, 0xffd166, 0xef476f];
 
@@ -164,6 +174,17 @@ export function handleMessage(name: string, payload: string): void {
       )
         return;
       nav.value = n;
+    } else if (name === 'notice') {
+      const n = JSON.parse(payload) as { text?: unknown };
+      if (typeof n.text !== 'string' || !n.text) return;
+      notices.value = [...notices.value, n.text].slice(-MAX_NOTICES);
+    } else if (name === 'download') {
+      const d = JSON.parse(payload) as DownloadOffer;
+      if (!Number.isInteger(d.id) || typeof d.name !== 'string') return;
+      offers.value = [...offers.value.filter((o) => o.id !== d.id), { id: d.id, name: d.name }];
+    } else if (name === 'download.done') {
+      const d = JSON.parse(payload) as { id?: unknown };
+      offers.value = offers.value.filter((o) => o.id !== d.id);
     } else if (name === 'focus') {
       const f = JSON.parse(payload) as { target?: unknown };
       if (f.target === 'sidebar') sidebarFocus.value++;
@@ -192,6 +213,10 @@ export const deleteWorkspace = (id: string) => send('workspaces.delete', { id })
 export const activateWorkspace = (id: string) => send('workspaces.activate', { id });
 /** Expand or collapse a workspace in the sidebar without switching to it. */
 export const expandWorkspace = (id: string, expanded: boolean) => send('workspaces.expand', { id, expanded });
+
+export const dismissNotice = (index: number) => (notices.value = notices.value.filter((_, i) => i !== index));
+/** Answer a download offer: save it (in the app's own folder) or cancel it. */
+export const decideDownload = (id: number, save: boolean) => send('download.decide', { id, save });
 
 export const newTab = () => send('tabs.new', {});
 export const closeTab = (id: string) => send('tabs.close', { id });
