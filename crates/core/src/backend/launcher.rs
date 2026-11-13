@@ -8,7 +8,7 @@
 //! A result's id is opaque text; `launcher.run` resolves it again against the *current* scope and refuses one that is outside it (S2).
 
 use super::*;
-use crate::{bookmark, commands, history, search};
+use crate::{bookmark, commands, entry, history, search};
 
 pub const LAUNCHER_OPEN: &str = "launcher.open";
 pub const LAUNCHER_CLOSE: &str = "launcher.close";
@@ -74,6 +74,8 @@ struct ResultOut {
     /// The workspace a result belongs to (shown with its colour); none for a command.
     workspace: Option<WorkspaceRef>,
     score: u32,
+    /// A short label shown as a badge: the environment of an entry (`prod` is drawn in red).
+    tag: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -215,6 +217,32 @@ impl Backend {
                         subtitle: b.url,
                         workspace: Some(Self::workspace_ref(w)),
                         score: s + 8,
+                        tag: None,
+                    });
+                }
+            }
+            // saved entries (Home Screen links), listed like bookmarks; a page that is an entry is not also shown from history
+            for e in self
+                .with_home(&w.id, |c| Ok(entry::all(c)?))
+                .unwrap_or_default()
+            {
+                let s = [
+                    search::score(query, &e.title).map(|s| s * 2),
+                    search::score(query, &e.url),
+                ]
+                .into_iter()
+                .flatten()
+                .max();
+                if let Some(s) = s {
+                    known.insert(e.url.split('#').next().unwrap_or("").to_string());
+                    results.push(ResultOut {
+                        id: format!("entry/{}/{}", w.id, e.id),
+                        kind: "entry",
+                        title: e.title,
+                        subtitle: e.url,
+                        workspace: Some(Self::workspace_ref(w)),
+                        score: s + 10,
+                        tag: e.env.map(entry::Env::as_str),
                     });
                 }
             }
@@ -249,6 +277,7 @@ impl Backend {
                             workspace: Some(Self::workspace_ref(w)),
                             // pages visited often rank a little higher
                             score: s + (v.visits.clamp(0, 10) as u32),
+                            tag: None,
                         });
                     }
                 }
@@ -278,6 +307,7 @@ impl Backend {
                         workspace: Some(Self::workspace_ref(w)),
                         // an open tab is more relevant than a command with the same match
                         score: s + 5,
+                        tag: None,
                     });
                 }
             }
@@ -303,7 +333,33 @@ impl Backend {
                         .unwrap_or_default(),
                     workspace: None,
                     score: s,
+                    tag: None,
                 });
+            }
+        }
+        // How often and how recently each result was opened from its workspace nudges the order (never what matches, never what is listed).
+        let now = entry::clock();
+        let mut counts: HashMap<Id, HashMap<String, (i64, i64)>> = HashMap::new();
+        for w in ids.iter().chain(std::iter::once(&self.active.clone())) {
+            if !counts.contains_key(w) {
+                let u = self
+                    .with_home(w, |c| Ok(entry::usage(c)?))
+                    .unwrap_or_default();
+                counts.insert(w.clone(), u);
+            }
+        }
+        for r in results.iter_mut() {
+            let key = match r.id.split('/').collect::<Vec<_>>().as_slice() {
+                [kind @ ("bm" | "hist" | "entry"), ws, n] => {
+                    Id::parse(ws).ok().map(|w| (w, format!("{kind}:{n}")))
+                }
+                ["cmd", cmd] => Some((self.active.clone(), format!("cmd:{cmd}"))),
+                _ => None,
+            };
+            if let Some((w, key)) = key {
+                if let Some((count, last)) = counts.get(&w).and_then(|u| u.get(&key)) {
+                    r.score += search::usage_boost(*count, now - last);
+                }
             }
         }
         // best first; the sort is stable, so ties stay in tab order, then command order
@@ -345,6 +401,7 @@ impl Backend {
             .strip_prefix("bm/")
             .map(|r| ("bm", r))
             .or_else(|| result_id.strip_prefix("hist/").map(|r| ("hist", r)))
+            .or_else(|| result_id.strip_prefix("entry/").map(|r| ("entry", r)))
         {
             // the address comes from the database of that workspace, never from the page that sent the id
             let (ws, n) = rest.split_once('/').ok_or("that result is not valid")?;
@@ -352,13 +409,23 @@ impl Backend {
             let n: i64 = n.parse().map_err(|_| "that result is not valid")?;
             let url = self
                 .with_db(&ws, |c| {
-                    Ok(if kind == "bm" {
-                        bookmark::get(c, n)?.map(|b| b.url)
-                    } else {
-                        history::get(c, n)?.map(|v| v.url)
+                    Ok(match kind {
+                        "bm" => bookmark::get(c, n)?.map(|b| b.url),
+                        "entry" => None,
+                        _ => history::get(c, n)?.map(|v| v.url),
                     })
                 })?
+                .or_else(|| {
+                    if kind == "entry" {
+                        self.with_home(&ws, |c| Ok(entry::get(c, n)?.map(|e| e.url)))
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    }
+                })
                 .ok_or("that page is no longer saved")?;
+            let _ = self.with_home(&ws, |c| Ok(entry::record_use(c, &format!("{kind}:{n}"))?));
             // opened as a new tab in that workspace, so it loads with that workspace's own login (S10)
             let o = self.run(Action::OpenIn { workspace: ws, url }, Source::Shell)?;
             close.replies.extend(o.replies);
@@ -368,6 +435,10 @@ impl Backend {
             let cmd = commands::find(cmd)
                 .filter(|c| c.id != CMD_OPEN)
                 .ok_or("that result is not valid")?;
+            let active = self.active.clone();
+            let _ = self.with_home(&active, |c| {
+                Ok(entry::record_use(c, &format!("cmd:{}", cmd.id))?)
+            });
             let o = self.command(cmd.id, Source::Shell)?;
             close.replies.extend(o.replies);
             close.effects.extend(o.effects);
@@ -379,7 +450,7 @@ impl Backend {
 
     /// Validate a result id against the scope, then close the launcher (which resets the scope). Returns the close outcome.
     fn launcher_close_after(&mut self, result_id: &str) -> Result<Outcome, Failure> {
-        if let Some(rest) = ["tab/", "bm/", "hist/"]
+        if let Some(rest) = ["tab/", "bm/", "hist/", "entry/"]
             .iter()
             .find_map(|p| result_id.strip_prefix(p))
         {

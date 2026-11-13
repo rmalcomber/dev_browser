@@ -44,6 +44,20 @@ fn score_word(word: &[char], hay: &[char]) -> Option<u32> {
     Some(s)
 }
 
+/// A small nudge for results the user opens often and recently: up to about 19 for frequency and 8 for recency. It never decides what
+/// matches, only the order of what already does, and only within the scope that was already allowed.
+pub fn usage_boost(count: i64, age_secs: i64) -> u32 {
+    let frequency = ((count.max(0) as f64 + 1.0).ln() * 8.0).min(19.0);
+    let recency = match age_secs {
+        a if a < 0 => 0.0,
+        a if a < 3600 => 8.0,
+        a if a < 86_400 => 4.0,
+        a if a < 7 * 86_400 => 2.0,
+        _ => 0.0,
+    };
+    (frequency + recency) as u32
+}
+
 fn find(hay: &[char], word: &[char]) -> Option<usize> {
     if word.len() > hay.len() {
         return None;
@@ -90,6 +104,19 @@ mod tests {
         assert!(
             score("new", "New tab").unwrap()
                 > score("new", "New tab in a workspace that has a very long name").unwrap()
+        );
+    }
+
+    #[test]
+    fn the_usage_boost_is_small_and_grows_with_use_and_recency() {
+        assert_eq!(usage_boost(0, 0), 8);
+        assert!(usage_boost(5, 10) > usage_boost(1, 10));
+        assert!(usage_boost(5, 10) > usage_boost(5, 10 * 86_400));
+        assert!(usage_boost(1_000_000, 0) <= 27, "bounded");
+        assert_eq!(usage_boost(-5, -5), 0);
+        assert!(
+            usage_boost(3, 100) < 100,
+            "never as big as a contiguous-match bonus"
         );
     }
 

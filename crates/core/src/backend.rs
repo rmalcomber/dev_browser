@@ -23,7 +23,7 @@ use crate::group;
 use crate::id::Id;
 use crate::ipc::{Refused, Reply, MAX_PAYLOAD_BYTES};
 use crate::tab::{self, Tab};
-use crate::{bookmark, history};
+use crate::{bookmark, entry, history};
 use crate::{settings, url, workspace};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -382,6 +382,8 @@ pub struct Backend {
     expanded: HashSet<Id>,
     /// Open workspace databases, kept so a tab operation does not reopen and re-migrate a file. Dropped when the workspace is deleted.
     workspace_dbs: HashMap<Id, Connection>,
+    /// The same for each workspace's Home Screen database.
+    home_dbs: HashMap<Id, Connection>,
     /// The page a new tab opens (until the launcher and address bar exist).
     start_url: String,
     /// Tabs that have a view, least recently shown first, with their workspace.
@@ -421,6 +423,7 @@ impl Backend {
             expanded: HashSet::from([active.clone()]),
             active,
             workspace_dbs: HashMap::new(),
+            home_dbs: HashMap::new(),
             start_url,
             live: Vec::new(),
             favicons: HashMap::new(),
@@ -560,6 +563,19 @@ impl Backend {
     // ---- database access ----
 
     /// Run `f` on a workspace's database (opened and migrated on first use).
+    /// Run `f` on a workspace's Home Screen database (opened and migrated on first use).
+    fn with_home<T>(
+        &mut self,
+        ws: &Id,
+        f: impl FnOnce(&Connection) -> Result<T, tab::TabError>,
+    ) -> Result<T, Failure> {
+        if !self.home_dbs.contains_key(ws) {
+            let conn = self.data.open_homescreen(ws).map_err(|e| e.to_string())?;
+            self.home_dbs.insert(ws.clone(), conn);
+        }
+        f(&self.home_dbs[ws]).map_err(|e| e.to_string())
+    }
+
     fn with_db<T>(
         &mut self,
         ws: &Id,
@@ -1184,6 +1200,7 @@ impl Backend {
             self.favicons.remove(&t.id);
         }
         self.workspace_dbs.remove(id);
+        self.home_dbs.remove(id);
         self.expanded.remove(id);
         let mut effects = vec![Effect::DeleteWorkspace(id.clone())];
         if &self.active == id {
@@ -1292,6 +1309,11 @@ impl Backend {
             "launcher.open" => Ok(self.launcher_open()),
             "bookmark.toggle" => self.bookmark_toggle(),
             "history.clear" => self.history_clear(),
+            "entry.save" => self.entry_save(None),
+            "entry.save.dev" => self.entry_save(Some(entry::Env::Dev)),
+            "entry.save.stage" => self.entry_save(Some(entry::Env::Stage)),
+            "entry.save.prod" => self.entry_save(Some(entry::Env::Prod)),
+            "entry.remove" => self.entry_remove(),
             "download.save" | "download.cancel" => {
                 let save = id == "download.save";
                 // the oldest waiting offer (the lowest id); nothing waiting is not an error
@@ -3449,6 +3471,219 @@ b{}",
                 .len(),
             1,
             "another workspace is untouched"
+        );
+    }
+
+    // ---- Home Screen entries and ranking (M2.3) ----
+
+    fn put_entry(b: &mut Backend, ws: &Id, url: &str, title: &str, env: Option<entry::Env>) {
+        b.with_home(ws, |c| {
+            entry::save(c, url, title, env)
+                .map(|_| ())
+                .map_err(tab::TabError::Message)
+        })
+        .unwrap();
+    }
+
+    fn entries_of(b: &mut Backend, ws: &Id) -> Vec<entry::Entry> {
+        b.with_home(ws, |c| Ok(entry::all(c)?)).unwrap()
+    }
+
+    #[test]
+    fn a_page_is_saved_as_an_entry_with_an_environment_and_can_be_updated_and_removed() {
+        let (_t, mut b, work, personal) = work_and_personal("e-save");
+        visit(&mut b, &work, "https://billing.example/", "Billing");
+        let o = b.run_command("entry.save.prod", Source::Page);
+        assert!(o.replies[0].payload.contains("Saved as an entry (prod)"));
+        let e = entries_of(&mut b, &work);
+        assert_eq!((e.len(), e[0].env), (1, Some(entry::Env::Prod)));
+        assert!(
+            entries_of(&mut b, &personal).is_empty(),
+            "only the page's own workspace"
+        );
+        b.run_command("entry.save.dev", Source::Page);
+        let e = entries_of(&mut b, &work);
+        assert_eq!(
+            (e.len(), e[0].env),
+            (1, Some(entry::Env::Dev)),
+            "saving again updates it"
+        );
+        let o = b.run_command("entry.remove", Source::Page);
+        assert!(o.replies[0].payload.contains("removed"));
+        assert!(entries_of(&mut b, &work).is_empty());
+        let o = b.run_command("entry.remove", Source::Page);
+        assert!(o.replies[0].payload.contains("not an entry"));
+        // the blank page is an error
+        let t = b.with_db(&work, tab::list).unwrap().remove(0);
+        b.with_db(&work, |c| tab::set_url(c, &t.id, "about:blank"))
+            .unwrap();
+        assert_eq!(
+            b.run_command("entry.save", Source::Page).replies[0].name,
+            "error"
+        );
+    }
+
+    #[test]
+    fn entries_are_found_with_their_environment_and_open_in_their_own_workspace() {
+        let (_t, mut b, work, personal) = work_and_personal("e-find");
+        visit(
+            &mut b,
+            &personal,
+            "https://private.example/vault",
+            "Vault prod",
+        );
+        send(&mut b, ACTIVATE, json!({"id": personal.as_str()}));
+        b.run_command("entry.save.prod", Source::Page);
+        let t = b.with_db(&personal, tab::list).unwrap().remove(0);
+        b.tab_url(&personal, &t.id, "https://private.example/elsewhere");
+        send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "vault"})));
+        let hit = r["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["kind"] == "entry")
+            .expect("an entry result")
+            .clone();
+        assert_eq!(hit["tag"], "prod");
+        assert_eq!(hit["workspace"]["name"], "Personal");
+        let before = b.with_db(&personal, tab::list).unwrap().len();
+        let o = send(&mut b, LAUNCHER_RUN, json!({"id": hit["id"]}));
+        assert_eq!(b.active(), &personal);
+        assert_eq!(b.with_db(&personal, tab::list).unwrap().len(), before + 1);
+        assert!(o.effects.iter().any(|e| matches!(e, Effect::Show { workspace, url, .. } if workspace == &personal && url == "https://private.example/vault")));
+    }
+
+    #[test]
+    fn s1_a_work_scoped_search_never_returns_personal_entries() {
+        let (_t, mut b, work, personal) = work_and_personal("e-s1");
+        let p = b.with_db(&personal, tab::list).unwrap().remove(0);
+        b.tab_url(&personal, &p.id, "https://private.example/divorce-lawyer");
+        b.tab_title(&personal, &p.id, "Divorce lawyer consultation");
+        put_entry(
+            &mut b,
+            &personal,
+            "https://private.example/divorce-lawyer",
+            "Divorce lawyer consultation",
+            Some(entry::Env::Prod),
+        );
+        b.with_home(&personal, |c| Ok(entry::record_use(c, "entry:1")?))
+            .unwrap();
+        send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        let mut all =
+            vec![serde_json::to_string(&results(&send(&mut b, LAUNCHER_OPEN, json!({})))).unwrap()];
+        for q in ["", "divorce", "lawyer", "private", "consult", "prod"] {
+            all.push(
+                serde_json::to_string(&results(&send(
+                    &mut b,
+                    LAUNCHER_SEARCH,
+                    json!({"query": q}),
+                )))
+                .unwrap(),
+            );
+        }
+        let hist = b
+            .with_home(&personal, |c| Ok(entry::all(c)?))
+            .unwrap()
+            .remove(0);
+        let o = send(
+            &mut b,
+            LAUNCHER_RUN,
+            json!({"id": format!("entry/{}/{}", personal, hist.id)}),
+        );
+        assert_eq!(first_reply(&o).0, "error");
+        assert!(o.effects.is_empty());
+        all.push(
+            o.replies
+                .iter()
+                .map(|r| r.payload.clone())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        for text in &all {
+            assert!(
+                !text.contains("ivorce")
+                    && !text.contains("lawyer")
+                    && !text.contains("private.example"),
+                "leaked: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn what_was_opened_often_and_lately_ranks_higher_but_is_never_listed() {
+        let (_t, mut b, work, _personal) = work_and_personal("e-rank");
+        for (n, title) in [("one", "Orchid Alpha"), ("two", "Orchid Beta")] {
+            put_entry(&mut b, &work, &format!("https://{n}.example/"), title, None);
+        }
+        let order = |b: &mut Backend| {
+            let r = results(&send(b, LAUNCHER_SEARCH, json!({"query": "orchid"})));
+            titles(&r)
+        };
+        assert_eq!(
+            order(&mut b),
+            vec!["Orchid Alpha", "Orchid Beta"],
+            "equal matches keep their order"
+        );
+        let beta = b.with_home(&work, |c| Ok(entry::all(c)?)).unwrap()[1].id;
+        for _ in 0..2 {
+            send(&mut b, LAUNCHER_OPEN, json!({}));
+            send(
+                &mut b,
+                LAUNCHER_RUN,
+                json!({"id": format!("entry/{}/{}", work, beta)}),
+            );
+            send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        }
+        assert_eq!(
+            order(&mut b),
+            vec!["Orchid Beta", "Orchid Alpha"],
+            "the one opened twice comes first"
+        );
+        // the boost orders, it does not list: a query that matches nothing returns nothing, however often it was opened
+        let none = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "zzzzqq"})));
+        assert!(none["results"].as_array().unwrap().is_empty());
+        // clearing history clears the counts too
+        b.run_command("history.clear", Source::Shell);
+        assert_eq!(order(&mut b), vec!["Orchid Alpha", "Orchid Beta"]);
+    }
+
+    #[test]
+    fn launch_counts_of_one_workspace_do_not_rank_another_workspaces_results() {
+        let (_t, mut b, work, personal) = work_and_personal("e-rank-scope");
+        for ws in [&work, &personal] {
+            for (n, title) in [("one", "Orchid Alpha"), ("two", "Orchid Beta")] {
+                put_entry(&mut b, ws, &format!("https://{n}.example/"), title, None);
+            }
+        }
+        // Personal opened Beta a lot; Work never did
+        for _ in 0..5 {
+            b.with_home(&personal, |c| Ok(entry::record_use(c, "entry:2")?))
+                .unwrap();
+        }
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "orchid"})));
+        let order: Vec<String> = r["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                format!(
+                    "{}:{}",
+                    x["workspace"]["name"].as_str().unwrap(),
+                    x["title"].as_str().unwrap()
+                )
+            })
+            .collect();
+        assert_eq!(
+            order[0], "Personal:Orchid Beta",
+            "Personal's own counts lift Personal's result"
+        );
+        assert!(
+            order.iter().position(|o| o == "Default:Orchid Alpha")
+                < order.iter().position(|o| o == "Default:Orchid Beta"),
+            "and do not touch Work's: {order:?}"
         );
     }
 }

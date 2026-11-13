@@ -21,11 +21,15 @@ name and an accent colour, drawn around the page it shows.
 - Tabs can be grouped inside a workspace, reordered, and opened in another workspace. Opening a page in another workspace loads it with that workspace's own login; cookies and credentials are never carried across.
 - Workspaces, tabs, groups, the selected tab and the window size come back after a restart.
 
-## The launcher (works today for tabs, bookmarks, history and commands)
+## The launcher (works today for tabs, bookmarks, history, entries and commands)
 
-`Ctrl+P` opens a floating launcher over the page, owned by the browser and invisible to websites. It searches the **open tabs, bookmarks, history and every command**, with forgiving matching: type a few letters of a tab's title or address, or of a command such as "new tab" or "reload", and press `Enter`. `Esc` closes it and returns you to the page. Drag the title bar to move it; it remembers where you left it.
+`Ctrl+P` opens a floating launcher over the page, owned by the browser and invisible to websites. It searches the **open tabs, bookmarks, history, saved entries and every command**, with forgiving matching: type a few letters of a tab's title or address, or of a command such as "new tab" or "reload", and press `Enter`. `Esc` closes it and returns you to the page. Drag the title bar to move it; it remembers where you left it.
 
-Search stays inside the workspace you are in. To look wider you choose "All workspaces" or pick workspaces yourself, the launcher says so on screen, and the wider search ends the moment the launcher closes. Saved Home Screen entries and tools come next.
+Search stays inside the workspace you are in. To look wider you choose "All workspaces" or pick workspaces yourself, the launcher says so on screen, and the wider search ends the moment the launcher closes. Tools come next.
+
+Results you open often, and recently, rise a little above equally good matches, but only within the workspaces you are already searching, and nothing is ever shown just because you opened it lately. "Clear this workspace's history" resets that too.
+
+**Entries** are saved, named links with an optional environment, like the links on a Home Screen developer tile. Run *Save this page as an entry (prod)* (or dev, stage, or none) from the launcher and the page is saved; it shows with a coloured badge, and prod is red so the wrong one is not opened by accident. Entries live in the workspace's own Home Screen database, apart from the browser's bookmarks and history.
 
 The longer description follows.
 

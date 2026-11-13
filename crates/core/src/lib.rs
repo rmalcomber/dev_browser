@@ -7,6 +7,7 @@ pub mod bookmark;
 pub mod commands;
 pub mod data;
 pub mod downloads;
+pub mod entry;
 pub mod errorpage;
 pub mod group;
 pub mod history;

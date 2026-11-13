@@ -25,6 +25,10 @@ Source: `planning/home-screen-browser-spec.md` sections 3.2, 8 and 10, and the M
 
 **M2.2 status: done 2026-11-13** (see the M2.2 entry in `docs/ai/decisions.md`). `tools\m22-places.ps1` passes on the real window; S1 is complete.
 
+**M2.3 status: done 2026-11-13** (see the M2.3 entry in `docs/ai/decisions.md`). `tools\m23-entries.ps1` passes on the real window. **M2 is done**, apart from the exit test below.
+
+**M2 exit ("a Work-scoped query cannot return Personal data"):** S1 to S4 pass as Rust tests and on the real window (`m21-launcher.ps1`, `m22-places.ps1`), now also covering entries and launch counts.
+
 ## Not in M2
 
 Tools and widgets (M3), split-view scope rules (M4: the contextual scope is one workspace until there are two panes), rebinding shortcuts.

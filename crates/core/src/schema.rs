@@ -73,6 +73,27 @@ pub const WORKSPACE: &[Migration] = &[
     },
 ];
 
+/// The workspace's Home Screen database (`homescreen.db`): saved entries and launch counts. Kept apart from `browser.db` as the spec asks;
+/// the folder separation is organisation, not a security boundary.
+pub const HOMESCREEN: &[Migration] = &[Migration {
+    version: 1,
+    name: "entries and launch counts",
+    sql: "
+        CREATE TABLE entries (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            url        TEXT NOT NULL UNIQUE,
+            title      TEXT NOT NULL,
+            env        TEXT CHECK (env IN ('dev', 'stage', 'prod')),
+            created_at INTEGER NOT NULL
+        );
+        CREATE TABLE launches (
+            key       TEXT PRIMARY KEY,               -- 'entry:3', 'bm:7', 'hist:12', 'cmd:nav.reload'
+            count     INTEGER NOT NULL,
+            last_used INTEGER NOT NULL
+        );
+    ",
+}];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,7 +102,7 @@ mod tests {
 
     #[test]
     fn both_lists_are_valid_and_apply() {
-        for list in [GLOBAL, WORKSPACE] {
+        for list in [GLOBAL, WORKSPACE, HOMESCREEN] {
             let mut c = Connection::open_in_memory().unwrap();
             let r = migrate(&mut c, list).unwrap();
             assert_eq!(r.to as usize, list.len());

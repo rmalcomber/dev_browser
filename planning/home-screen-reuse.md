@@ -27,6 +27,10 @@ decision rather than a copy-paste. Source: `projects/home_screen` (read-only fro
 4. Whether to share code by copying, by a shared package, or by keeping the two apps independent. Default: copy deliberately
    and record it; do not couple the repos until there is a clear shared package.
 
+## What M2.3 took (2026-11-13, home_screen at `fcfc845`)
+
+Read, not copied: `web/src/core/launcher/` (`registry.js` providers and ranking tiers, `providers.js` items for tiles, bookmark links, developer environments and GitHub repos) and `web/src/core/store.js` for the shape of a tile. Taken as ideas and rewritten in Rust and Preact in this project: result kinds with a badge, the `dev` / `stage` / `prod` environments (prod red), and ranking by match quality then use. Left for M3: tiles, pages, templates, the extension tools and their manifests. Answers to the questions above: (1) the launcher's data comes from a global store, so the data layer had to be replaced, not swapped; (2) not yet looked at per tool; (3) not measured; (4) decision: copy deliberately and record it, nothing is shared yet.
+
 ## Rules
 
 - Do not edit `projects/home_screen` from here; changes there are their own commits in their own repo.

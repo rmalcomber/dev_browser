@@ -192,6 +192,11 @@ pub const COMMANDS: &[Command] = &[
         "Bookmark this page (or remove its bookmark)",
         ["ctrl+d"]
     ),
+    cmd!("entry.save", "Save this page as an entry", []),
+    cmd!("entry.save.dev", "Save this page as an entry (dev)", []),
+    cmd!("entry.save.stage", "Save this page as an entry (stage)", []),
+    cmd!("entry.save.prod", "Save this page as an entry (prod)", []),
+    cmd!("entry.remove", "Remove this page's entry", []),
     cmd!("history.clear", "Clear this workspace's history", []),
     cmd!(
         "download.save",

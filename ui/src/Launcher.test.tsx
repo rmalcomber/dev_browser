@@ -104,6 +104,17 @@ describe('the launcher page', () => {
     expect(results.value.length).toBe(2);
   });
 
+  it('shows an entry with its environment, prod in red, and refuses an unknown one', async () => {
+    const entry = (id: string, tag: string | null) => ({ ...res(id, 'Billing', WS[0], 'entry'), tag });
+    handleMessage('launcher.results', payload([entry('entry/ws-a/1', 'prod'), entry('entry/ws-a/2', null)]));
+    render(<Launcher />, root);
+    await tick();
+    expect(Array.from(root.querySelectorAll('.ltag')).map((x) => x.className)).toEqual(['ltag prod']);
+    expect(root.querySelectorAll('.lkind').length).toBe(2);
+    handleMessage('launcher.results', payload([entry('entry/ws-a/3', 'qa')]));
+    expect(results.value.length).toBe(2);
+  });
+
   it('starts afresh when the app opens it', () => {
     query.value = 'old';
     selected.value = 3;

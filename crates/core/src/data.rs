@@ -103,6 +103,9 @@ impl DataDir {
     pub fn workspace_dir(&self, id: &Id) -> PathBuf {
         self.workspaces_root().join(id.as_str())
     }
+    pub fn homescreen_db_path(&self, id: &Id) -> PathBuf {
+        self.workspace_dir(id).join("homescreen.db")
+    }
     pub fn workspace_db_path(&self, id: &Id) -> PathBuf {
         self.workspace_dir(id).join("browser.db")
     }
@@ -122,6 +125,15 @@ impl DataDir {
         let mut c = Connection::open(self.workspace_db_path(id))?;
         c.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         migrate::migrate(&mut c, schema::WORKSPACE)?;
+        Ok(c)
+    }
+
+    /// Open (creating and migrating) one workspace's Home Screen database.
+    pub fn open_homescreen(&self, id: &Id) -> Result<Connection, DataError> {
+        std::fs::create_dir_all(self.workspace_dir(id))?;
+        let mut c = Connection::open(self.homescreen_db_path(id))?;
+        c.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
+        migrate::migrate(&mut c, schema::HOMESCREEN)?;
         Ok(c)
     }
 

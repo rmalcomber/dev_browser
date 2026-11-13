@@ -11,11 +11,13 @@ export interface WorkspaceRef {
 export interface Result {
   /** Opaque: only the app can say what it means. */
   id: string;
-  kind: 'tab' | 'command' | 'bookmark' | 'history';
+  kind: 'tab' | 'command' | 'bookmark' | 'history' | 'entry';
   title: string;
   subtitle: string;
   workspace: WorkspaceRef | null;
   score: number;
+  /** A badge: the environment of an entry (prod is drawn red). */
+  tag?: 'dev' | 'stage' | 'prod' | null;
 }
 
 export type ScopeKind = 'contextual' | 'selected' | 'all';
@@ -40,11 +42,12 @@ const isResult = (v: unknown): v is Result => {
   return (
     !!r &&
     typeof r.id === 'string' &&
-    ['tab', 'command', 'bookmark', 'history'].includes(r.kind) &&
+    ['tab', 'command', 'bookmark', 'history', 'entry'].includes(r.kind) &&
     typeof r.title === 'string' &&
     typeof r.subtitle === 'string' &&
     (r.workspace === null || isRef(r.workspace)) &&
-    typeof r.score === 'number'
+    typeof r.score === 'number' &&
+    (r.tag === undefined || r.tag === null || ['dev', 'stage', 'prod'].includes(r.tag))
   );
 };
 
