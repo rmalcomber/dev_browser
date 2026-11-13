@@ -88,6 +88,11 @@ impl Id {
         }
     }
 
+    /// The part before the first hyphen: `ws`, `tab`, `grp`.
+    pub fn kind(&self) -> &str {
+        self.0.split_once('-').map(|(k, _)| k).unwrap_or("")
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

@@ -1,9 +1,10 @@
-//! IPC v0 plumbing shared by both processes: how a message (name + text payload) is packed into a CEF process message, and the
-//! browser-side gate that decides whether to believe one. What a message *means* is decided in `dev_browser_core::ipc`.
+//! IPC plumbing shared by both processes: how a message (name + text payload) is packed into a CEF process message, and the
+//! browser-side gate that decides whether to believe one. What a message *means* is decided by `dev_browser_core::backend::Backend`;
+//! this module only carries the replies and executes the effects it returns.
 
-use crate::{handlers::Role, shell};
+use crate::{handlers::Role, pages, shell, state};
 use cef::*;
-use dev_browser_core::ipc as core_ipc;
+use dev_browser_core::backend::Effect;
 
 /// Process-message name carrying every IPC v0 message; the real message name is argument 0.
 const WIRE: &str = "m0.msg";
@@ -51,9 +52,22 @@ pub fn on_message(role: Role, frame: &Frame, message: &ProcessMessage) -> bool {
         );
         return true;
     }
-    match core_ipc::handle(&name, &payload) {
-        Ok(reply) => send(frame, ProcessId::RENDERER, reply.name, &reply.payload),
-        Err(why) => eprintln!("[host] refused IPC message: {why}"),
+    // The backend decides; the borrow of the state ends before any CEF call below.
+    let outcome = state::with(|s| s.backend.as_mut().map(|b| b.handle(&name, &payload)));
+    match outcome {
+        Some(Ok(outcome)) => {
+            for effect in outcome.effects {
+                match effect {
+                    Effect::Activate(id) => pages::show(&id),
+                    Effect::Delete(id) => pages::delete(&id),
+                }
+            }
+            for reply in outcome.replies {
+                send(frame, ProcessId::RENDERER, reply.name, &reply.payload);
+            }
+        }
+        Some(Err(why)) => eprintln!("[host] refused IPC message: {why}"),
+        None => eprintln!("[host] dropped IPC message: no backend"),
     }
     true
 }

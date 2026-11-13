@@ -46,24 +46,34 @@ pub fn page_width(panel_width: i32) -> i32 {
     (panel_width - SHELL_WIDTH).max(1)
 }
 
+/// The set of visible views changed: re-install the layout even if the window size did not.
+pub fn changed() {
+    state::with(|s| s.layout_gen = s.layout_gen.wrapping_add(1));
+    relayout();
+}
+
 pub fn relayout() {
-    let (panel, shell, page, last) = state::with(|s| {
+    let (panel, shell, pages, last, generation) = state::with(|s| {
         (
             s.panel.clone(),
             s.shell.clone(),
-            s.page.clone(),
+            s.pages
+                .values()
+                .filter_map(|p| p.view.clone())
+                .collect::<Vec<_>>(),
             s.last_layout,
+            s.layout_gen,
         )
     });
-    let (Some(panel), Some(shell), Some(page)) = (panel, shell, page) else {
+    let (Some(panel), Some(shell)) = (panel, shell) else {
         return;
     };
     let size = panel.size();
-    if size.width <= 0 || size.height <= 0 || (size.width, size.height) == last {
+    if size.width <= 0 || size.height <= 0 || (size.width, size.height, generation) == last {
         return;
     }
     state::with(|s| {
-        s.last_layout = (size.width, size.height);
+        s.last_layout = (size.width, size.height, generation);
         s.page_width = page_width(size.width);
     });
     let Some(layout) = panel.set_to_box_layout(Some(&BoxLayoutSettings {
@@ -73,11 +83,15 @@ pub fn relayout() {
     })) else {
         return;
     };
-    let (mut vs, mut vp) = (View::from(&shell), View::from(&page));
+    // hidden views are skipped by the layout, so only the active page takes the width beside the shell
+    let mut vs = View::from(&shell);
     layout.set_flex_for_view(Some(&mut vs), 0);
-    layout.set_flex_for_view(Some(&mut vp), 0);
     shell.invalidate_layout();
-    page.invalidate_layout();
+    for page in &pages {
+        let mut vp = View::from(page);
+        layout.set_flex_for_view(Some(&mut vp), 0);
+        page.invalidate_layout();
+    }
     panel.invalidate_layout();
 }
 

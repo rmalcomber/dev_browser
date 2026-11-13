@@ -1,47 +1,29 @@
-//! The top-level window: creates the views once the profile is ready, and closes cleanly.
+//! The top-level window: the trusted shell, the workspace pages beside it, and a clean close.
 
 use crate::{
     handlers::{HostClient, Role},
-    layout, shell, state,
+    layout, pages, shell, state,
 };
 use cef::*;
 
-/// Called when the workspace profile is ready: build both views and the window.
+/// Create the shell view and the window. Workspace pages are added later by `pages` (the first one when the window exists).
 pub fn open() {
-    let config = state::config();
-    let mut ctx = state::with(|s| s.context.clone());
-
     let mut shell_client = HostClient::new(Role::Shell);
     let mut shell_style = layout::ViewStyle::new(false);
-    let shell = browser_view_create(
+    // no request context: the shell uses CEF's global one, so it shares no cookies or storage with any workspace
+    let Some(shell) = browser_view_create(
         Some(&mut shell_client),
         Some(&CefString::from(shell::START_URL)),
         Some(&layout::browser_settings()),
         None,
         None,
         Some(&mut shell_style),
-    );
-
-    let mut page_client = HostClient::new(Role::Page);
-    let mut page_style = layout::ViewStyle::new(true);
-    let page = browser_view_create(
-        Some(&mut page_client),
-        Some(&CefString::from(config.start_url.as_str())),
-        Some(&layout::browser_settings()),
-        None,
-        ctx.as_mut(),
-        Some(&mut page_style),
-    );
-
-    let (Some(shell), Some(page)) = (shell, page) else {
-        eprintln!("[host] could not create the views (profile not usable?)");
+    ) else {
+        eprintln!("[host] could not create the shell view");
         quit_message_loop();
         return;
     };
-    state::with(|s| {
-        s.shell = Some(shell);
-        s.page = Some(page);
-    });
+    state::with(|s| s.shell = Some(shell));
     let mut delegate = Frame::new();
     window_create_top_level(Some(&mut delegate));
 }
@@ -60,23 +42,24 @@ wrap_window_delegate! {
             // The panel goes into the window first so the browser views' native windows are created inside it.
             let mut pv = View::from(&panel);
             window.add_child_view(Some(&mut pv));
-            let (shell, page) = state::with(|s| (s.shell.clone(), s.page.clone()));
-            if let (Some(shell), Some(page)) = (shell, page) {
-                let (mut vs, mut vp) = (View::from(&shell), View::from(&page));
+            if let Some(shell) = state::with(|s| s.shell.clone()) {
+                let mut vs = View::from(&shell);
                 panel.add_child_view(Some(&mut vs));
-                panel.add_child_view(Some(&mut vp));
             }
             window.set_title(Some(&CefString::from("The Dev Browser")));
             state::with(|s| { s.panel = Some(panel); s.window = Some(window.clone()); });
             window.show();
-            if let Some(p) = state::with(|s| s.page.clone()) { p.request_focus(); }
-            layout::relayout();
+            layout::changed();
             // The first layout pass can come before the panel has its final size; look again shortly.
             let mut again = Relayout::new();
             post_delayed_task(ThreadId::UI, Some(&mut again), 300);
+            // the window exists, so the active workspace's page can be created in it
+            if let Some(active) = state::with(|s| s.backend.as_ref().map(|b| b.active().clone())) {
+                pages::show(&active);
+            }
         }
         fn on_window_destroyed(&self, _w: Option<&mut Window>) {
-            state::with(|s| { s.shell = None; s.page = None; s.panel = None; s.window = None; });
+            state::with(|s| { s.shell = None; s.pages.clear(); s.panel = None; s.window = None; });
             quit_message_loop();
         }
         fn window_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::ALLOY }

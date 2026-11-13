@@ -4,10 +4,11 @@
 //! - the cache folder must be a **direct child** of `root_cache_path`, in the same separator form (backslashes on Windows), or CEF
 //!   quietly falls back to an in-memory profile;
 //! - the context is created asynchronously, and **no view may be created until `on_request_context_initialized` fires** (otherwise
-//!   `browser_view_create` returns nothing).
+//!   `browser_view_create` returns nothing). `pages::context_ready` is that gate.
 
-use crate::{state, state::Config, window};
+use crate::{pages, state};
 use cef::*;
+use dev_browser_core::id::Id;
 use std::path::Path;
 
 /// `Err` explains why the folder is not an acceptable profile folder.
@@ -19,42 +20,40 @@ pub fn check_profile_dir(root: &Path, dir: &Path) -> Result<(), String> {
             root.display()
         ));
     }
-    if dir
+    let valid_id = dir
         .file_name()
         .and_then(|n| n.to_str())
-        .map(|n| dev_browser_core::id::Id::parse(n).is_ok())
-        != Some(true)
-    {
+        .and_then(|n| Id::parse(n).ok())
+        .map(|id| id.kind() == "ws");
+    if valid_id != Some(true) {
         return Err(format!(
-            "profile folder name in {} is not a valid workspace id",
+            "profile folder name in {} is not a workspace id",
             dir.display()
         ));
     }
     Ok(())
 }
 
-pub fn create(config: &Config) {
-    if let Err(why) = check_profile_dir(&config.data.chromium_root(), &config.profile_dir) {
-        eprintln!("[host] refusing to start: {why}");
-        quit_message_loop();
-        return;
-    }
+/// Start creating the profile for a workspace. The returned context is not usable until `pages::context_ready` is called for `id`.
+pub fn create_context(id: &Id) -> Result<RequestContext, String> {
+    let data = state::config().data;
+    let dir = data.chromium_profile(id);
+    check_profile_dir(&data.chromium_root(), &dir)?;
     let settings = RequestContextSettings {
-        cache_path: CefString::from(config.profile_dir.to_string_lossy().as_ref()),
+        cache_path: CefString::from(dir.to_string_lossy().as_ref()),
         persist_session_cookies: 1,
         ..Default::default()
     };
-    let mut handler = ProfileReady::new();
-    let ctx = request_context_create_context(Some(&settings), Some(&mut handler));
-    state::with(|s| s.context = ctx);
+    let mut handler = ProfileReady::new(id.clone());
+    request_context_create_context(Some(&settings), Some(&mut handler))
+        .ok_or_else(|| "CEF refused to create the request context".to_string())
 }
 
 wrap_request_context_handler! {
-    struct ProfileReady {}
+    struct ProfileReady { id: Id }
     impl RequestContextHandler {
         fn on_request_context_initialized(&self, _c: Option<&mut RequestContext>) {
-            println!("[host] profile ready");
-            window::open();
+            pages::context_ready(&self.id);
         }
     }
 }
@@ -62,10 +61,9 @@ wrap_request_context_handler! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dev_browser_core::id::Id;
 
     #[test]
-    fn only_a_direct_child_with_an_id_name_is_accepted() {
+    fn only_a_direct_child_with_a_workspace_id_name_is_accepted() {
         let root = Path::new("C:\\data\\chromium-root");
         let id = Id::new("ws");
         assert!(check_profile_dir(root, &root.join(id.as_str())).is_ok());
@@ -80,6 +78,10 @@ mod tests {
         assert!(
             check_profile_dir(root, &root.join("Default")).is_err(),
             "not an id"
+        );
+        assert!(
+            check_profile_dir(root, &root.join(Id::new("tab").as_str())).is_err(),
+            "an id of another kind"
         );
         assert!(check_profile_dir(root, root).is_err(), "the root itself");
     }

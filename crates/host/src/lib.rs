@@ -5,6 +5,7 @@ mod app;
 mod handlers;
 mod ipc;
 mod layout;
+mod pages;
 mod profile;
 mod render;
 mod shell;
@@ -56,7 +57,22 @@ pub fn run(config: Config) -> i32 {
         root_cache_path: CefString::from(root.to_string_lossy().as_ref()),
         ..Default::default()
     };
-    state::with(|s| s.config = Some(config));
+    // Open the backend (global database, first workspace, orphan sweep) before CEF starts: nothing holds the profile folders yet, so the
+    // sweep can remove what a locked delete left behind last time.
+    let backend = match dev_browser_core::backend::Backend::open(config.data.clone()) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("[host] cannot open the data folder: {e}");
+            return 1;
+        }
+    };
+    for id in backend.orphans_removed() {
+        println!("[host] removed leftover data of deleted workspace {id}");
+    }
+    state::with(|s| {
+        s.config = Some(config);
+        s.backend = Some(backend);
+    });
     if initialize(
         Some(args.as_main_args()),
         Some(&settings),
@@ -71,6 +87,28 @@ pub fn run(config: Config) -> i32 {
     }
     run_message_loop();
     shutdown();
+    // Nothing holds the profile folders now. Chromium kept a deleted workspace's profile open until here, so remove its data now.
+    // Chromium's child processes can take a moment to let go after shutdown, so retry for a few seconds before giving up (the next
+    // start sweeps again).
+    if let Some(backend) = state::with(|s| s.backend.take()) {
+        for attempt in 0..20 {
+            match backend.sweep_orphans() {
+                Ok(removed) => {
+                    for id in removed {
+                        println!("[host] workspace {id}: data removed at exit");
+                    }
+                    break;
+                }
+                Err(e) if attempt < 19 => {
+                    let _ = e;
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+                Err(e) => eprintln!(
+                    "[host] could not remove deleted workspaces' data at exit ({e}); the next start will"
+                ),
+            }
+        }
+    }
     0
 }
 

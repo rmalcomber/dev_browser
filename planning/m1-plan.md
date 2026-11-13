@@ -91,6 +91,12 @@ Panel-with-box-layout, dark browser background, DirectComposition switch and cle
 **Done when:** workspaces can be created, listed, renamed, coloured and deleted through IPC; each has its own profile folder; two
 workspaces on one site keep separate logins (the M1 exit scenario, by hand); deleting a workspace removes its data.
 
+**Status: done 2026-11-13** (see the M1.2 entry in `docs/ai/decisions.md`). Checked by 39 `core` unit tests, 10 shell tests and
+`tools\m12-workspaces.ps1`, which drives the real sidebar with real input: a second workspace on the same site does not see the first's
+cookie or localStorage, switching works, deleting through the UI works, one click on X closes the app, a restart keeps each workspace's
+own login, and the deleted workspace's data is gone when the app exits. Two deliberate limits: deletion happens at exit (Chromium holds
+the profile open until then), and the backend runs on the UI thread for now.
+
 ### M1.3 Tabs and view lifecycle (L)
 Tab and group records; open, close, select, move; a pane model that holds a reference to a tab (one pane now, shaped for two);
 create a tab's view on demand, destroy it on discard, recreate it from its record; focus and shortcut routing at window level so no

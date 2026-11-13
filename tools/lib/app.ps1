@@ -33,11 +33,13 @@ function Get-AppExe {
 }
 
 # Start the app on a throw-away data folder and wait for its window. Returns a hashtable: Proc, Out, Err, Dir, Handle.
-function Start-App([string]$Url = 'https://example.com/', [string[]]$ExtraArgs = @(), [int]$WindowSeconds = 40, [switch]$NoFocus) {
+function Start-App([string]$Url = 'https://example.com/', [string[]]$ExtraArgs = @(), [int]$WindowSeconds = 40, [switch]$NoFocus, [string]$ReuseDir = '') {
   Stop-App
-  $dir = Join-Path $env:TEMP ('devb_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-  New-Item -ItemType Directory $dir | Out-Null
-  $o = Join-Path $dir 'app.out'; $e = Join-Path $dir 'app.err'
+  # -ReuseDir: start again on a folder an earlier Start-App made (its data survives), to test what a restart keeps
+  $dir = if ($ReuseDir) { $ReuseDir } else { Join-Path $env:TEMP ('devb_' + [guid]::NewGuid().ToString('N').Substring(0, 8)) }
+  if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir | Out-Null }
+  $stamp = [guid]::NewGuid().ToString('N').Substring(0, 6)
+  $o = Join-Path $dir "app-$stamp.out"; $e = Join-Path $dir "app-$stamp.err"
   $p = Start-Process (Get-AppExe) -ArgumentList (@("--data-dir=$(Join-Path $dir 'data')", "--url=$Url") + $ExtraArgs) -RedirectStandardOutput $o -RedirectStandardError $e -PassThru
   $h = [IntPtr]::Zero
   $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -110,6 +112,25 @@ function Send-Keys([string]$chord) {
   foreach ($m in $mods) { [Win]::keybd_event($m, 0, 0, [UIntPtr]::Zero) }
   [Win]::keybd_event($key, 0, 0, [UIntPtr]::Zero); [Win]::keybd_event($key, 0, 2, [UIntPtr]::Zero)
   for ($i = $mods.Count - 1; $i -ge 0; $i--) { [Win]::keybd_event($mods[$i], 0, 2, [UIntPtr]::Zero) }
+}
+
+# Type text as real key presses (letters, digits, space, and shift for capitals).
+function Send-Text([string]$text) {
+  foreach ($ch in $text.ToCharArray()) {
+    $s = [string]$ch
+    if ($s -cmatch '[A-Z]') { Send-Keys ("shift+" + $s.ToLower()) }
+    elseif ($s -eq ' ') { Send-Keys 'space' }
+    else { Send-Keys $s }
+    Start-Sleep -Milliseconds 40
+  }
+}
+
+# Close the app the way a user does (one click on X), wait for it to exit. Returns $true if it exited within $seconds.
+function Close-App($app, [int]$seconds = 20) {
+  [void]$app.Proc.CloseMainWindow()
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  while ($sw.Elapsed.TotalSeconds -lt $seconds) { if (-not (Get-Process dev_browser -ErrorAction SilentlyContinue)) { return $true }; Start-Sleep -Milliseconds 200 }
+  $false
 }
 
 # Save a picture of the window (or only its client area) to a PNG file.

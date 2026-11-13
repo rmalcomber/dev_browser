@@ -1,6 +1,6 @@
 //! The Dev Browser binary. Wiring only: the command line, the data folder, and starting the host.
 
-use dev_browser_core::{data::DataDir, workspace};
+use dev_browser_core::data::DataDir;
 use dev_browser_host::Config;
 use std::path::PathBuf;
 
@@ -28,7 +28,6 @@ fn main() {
 fn child_config() -> Config {
     Config {
         data: DataDir::unopened(std::env::temp_dir()),
-        profile_dir: PathBuf::new(),
         start_url: String::new(),
     }
 }
@@ -42,23 +41,9 @@ fn start(args: &[String]) -> Result<Config, String> {
         .map(PathBuf::from)
         .or_else(DataDir::default_location)
         .ok_or("cannot find a data folder (pass --data-dir=PATH)")?;
+    // the folders are created here; the host opens the databases and decides which workspace is active
     let data = DataDir::open(&root).map_err(|e| e.to_string())?;
-    let mut global = data.open_global().map_err(|e| e.to_string())?;
-    // M1.2 adds real workspace management; until then there is one workspace, created on first run.
-    let first = match workspace::list(&global)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .next()
-    {
-        Some(w) => w,
-        None => data
-            .create_workspace(&mut global, "Default", 0x2C5FA8)
-            .map_err(|e| e.to_string())?,
-    };
-    drop(global);
-    data.open_workspace(&first.id).map_err(|e| e.to_string())?;
     Ok(Config {
-        profile_dir: data.chromium_profile(&first.id),
         start_url: flag("url").unwrap_or_else(|| "https://example.com/".to_string()),
         data,
     })

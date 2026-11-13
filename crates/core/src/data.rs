@@ -136,7 +136,7 @@ impl DataDir {
         let ws = workspace::create(global, name, colour)?;
         if let Err(e) = self.open_workspace(&ws.id) {
             let _ = workspace::delete_record(global, &ws.id);
-            let _ = self.remove_folders(&ws.id);
+            let _ = self.remove_workspace_folders(&ws.id);
             return Err(e);
         }
         Ok(ws)
@@ -146,11 +146,13 @@ impl DataDir {
     /// A folder that cannot be removed is reported, not ignored, and the next start can retry it with `remove_orphans`.
     pub fn delete_workspace(&self, global: &mut Connection, id: &Id) -> Result<(), DataError> {
         workspace::delete_record(global, id)?;
-        self.remove_folders(id)?;
+        self.remove_workspace_folders(id)?;
         Ok(())
     }
 
-    fn remove_folders(&self, id: &Id) -> Result<(), DataError> {
+    /// Remove a workspace's own folder and its Chromium profile. Missing folders are fine; a locked one is an error (retry later, or
+    /// `remove_orphans` at the next start). Does not touch the record.
+    pub fn remove_workspace_folders(&self, id: &Id) -> Result<(), DataError> {
         for dir in [self.workspace_dir(id), self.chromium_profile(id)] {
             match std::fs::remove_dir_all(&dir) {
                 Ok(()) => {}
@@ -167,6 +169,7 @@ impl DataDir {
         let known: std::collections::HashSet<Id> =
             workspace::list(global)?.into_iter().map(|w| w.id).collect();
         let mut removed = Vec::new();
+        let mut first_error = None;
         for base in [self.workspaces_root(), self.chromium_root()] {
             for entry in std::fs::read_dir(&base)? {
                 let entry = entry?;
@@ -174,15 +177,26 @@ impl DataDir {
                     continue;
                 };
                 let Ok(id) = Id::parse(&name) else { continue };
+                // only folders that look exactly like ours (kind "ws"): CEF keeps its own folders in chromium-root
+                if id.kind() != "ws" {
+                    continue;
+                }
                 if !known.contains(&id) && entry.path().is_dir() {
-                    std::fs::remove_dir_all(entry.path())?;
+                    // a locked folder must not stop the others being removed; report the first failure at the end
+                    if let Err(e) = std::fs::remove_dir_all(entry.path()) {
+                        first_error.get_or_insert(e);
+                        continue;
+                    }
                     if !removed.contains(&id) {
                         removed.push(id);
                     }
                 }
             }
         }
-        Ok(removed)
+        match first_error {
+            Some(e) => Err(DataError::Io(e)),
+            None => Ok(removed),
+        }
     }
 }
 

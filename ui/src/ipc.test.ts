@@ -1,29 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { connect, inApp, lastReply, ping } from './ipc';
+import { connect, inApp, send } from './ipc';
 
 afterEach(() => {
   delete window.m0;
-  lastReply.value = null;
 });
 
-describe('ipc v0', () => {
+describe('ipc', () => {
   it('does nothing outside the app', () => {
     expect(inApp()).toBe(false);
-    expect(ping('x')).toBe(false);
-    expect(() => connect()).not.toThrow();
+    expect(send('workspaces.list')).toBe(false);
+    expect(() => connect(() => {})).not.toThrow();
   });
 
-  it('sends a ping through window.m0', () => {
-    const send = vi.fn();
-    window.m0 = { send, onmessage: null };
-    expect(ping('hello')).toBe(true);
-    expect(send).toHaveBeenCalledWith('ping', 'hello');
+  it('sends objects as JSON and strings as they are', () => {
+    const sendFn = vi.fn();
+    window.m0 = { send: sendFn, onmessage: null };
+    expect(send('workspaces.create', { name: 'Work', colour: 1 })).toBe(true);
+    expect(sendFn).toHaveBeenLastCalledWith('workspaces.create', '{"name":"Work","colour":1}');
+    send('ping', 'hello');
+    expect(sendFn).toHaveBeenLastCalledWith('ping', 'hello');
+    send('workspaces.list');
+    expect(sendFn).toHaveBeenLastCalledWith('workspaces.list', '{}');
   });
 
-  it('shows the reply the app sends back', () => {
+  it('delivers the app\'s messages to the handler', () => {
     window.m0 = { send: vi.fn(), onmessage: null };
-    connect();
-    window.m0.onmessage?.('pong', 'hello');
-    expect(lastReply.value).toBe('pong: hello');
+    const handler = vi.fn();
+    connect(handler);
+    window.m0.onmessage?.('pong', 'hi');
+    expect(handler).toHaveBeenCalledWith('pong', 'hi');
   });
 });

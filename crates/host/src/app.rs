@@ -1,6 +1,6 @@
 //! The CEF `App` and the browser-process handler: startup switches and the moment the profile can be created.
 
-use crate::{profile, render, shell, state};
+use crate::{render, shell, window};
 use cef::*;
 
 /// Finding (M0): with two or more content views in one window the GPU process crashed at start-up on the development machine.
@@ -34,8 +34,7 @@ wrap_browser_process_handler! {
     impl BrowserProcessHandler {
         fn on_context_initialized(&self) {
             shell::register_factory();
-            let config = state::config();
-            profile::create(&config);
+            window::open();
         }
     }
 }

@@ -9,3 +9,6 @@ publish.workspace = true
 [dependencies]
 # SQLite, bundled so the build needs no system library; the same crate and feature home_screen uses (see docs/ai/decisions.md).
 rusqlite = { version = "0.32", features = ["bundled"] }
+# JSON for the IPC messages between the shell and the app (docs/ai/decisions.md, M1.2). Only this crate uses them.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,5 +1,3 @@
-import { signal } from '@preact/signals';
-
 /** The binding the app installs as `window.m0`, only for pages served from app://shell. */
 export interface M0 {
   send(name: string, payload: string): void;
@@ -12,25 +10,23 @@ declare global {
   }
 }
 
-/** The last reply from the app, as "name: payload" (null until one arrives). */
-export const lastReply = signal<string | null>(null);
-
 /** True when running inside the app (the binding exists). In a plain browser, for example under `vite dev`, it does not. */
 export function inApp(): boolean {
   return typeof window !== 'undefined' && typeof window.m0?.send === 'function';
 }
 
-/** Start listening for replies. Call once at start-up. */
-export function connect(): void {
-  if (!window.m0) return;
-  window.m0.onmessage = (name, payload) => {
-    lastReply.value = `${name}: ${payload}`;
-  };
+/**
+ * Send a message to the app. An object payload goes as JSON; a string goes as it is (`ping` takes any text).
+ * Returns false when not running inside the app.
+ */
+export function send(name: string, payload: unknown = {}): boolean {
+  if (!inApp()) return false;
+  window.m0!.send(name, typeof payload === 'string' ? payload : JSON.stringify(payload));
+  return true;
 }
 
-/** Send a ping; the app answers `pong` with the same payload. Returns false when not running inside the app. */
-export function ping(payload: string): boolean {
-  if (!inApp()) return false;
-  window.m0!.send('ping', payload);
-  return true;
+/** Start listening for the app's messages. Call once at start-up. */
+export function connect(handler: (name: string, payload: string) => void): void {
+  if (!window.m0) return;
+  window.m0.onmessage = handler;
 }

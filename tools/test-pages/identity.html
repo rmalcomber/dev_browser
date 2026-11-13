@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>identity (workspace isolation check)</title>
+<!--
+  Stands in for "a site you are logged in to". On load it looks for an identity token in a cookie and in localStorage; if there is none it
+  makes one and stores it in both (the cookie persists for a day). It reports in its title:  [id] had=<cookie>/<localStorage> now=<token>
+  A workspace that has never seen this site reports had=none/none. A different workspace, on the same site, must also report none/none
+  (separate login), and the same workspace after a restart must report its own earlier token.
+-->
+<body style="margin:0;background:#224;color:#fff;font:40px sans-serif;padding:20px">identity page
+<script>
+(function () {
+  function cookie() { var m = document.cookie.match(/(?:^|; )who=([^;]*)/); return m ? m[1] : null; }
+  var c = cookie(), l = null;
+  try { l = localStorage.getItem('who'); } catch (e) {}
+  var token = c || l || Math.random().toString(36).slice(2, 10);
+  document.cookie = 'who=' + token + '; max-age=86400; path=/; SameSite=Lax';
+  try { localStorage.setItem('who', token); } catch (e) {}
+  document.title = '[id] had=' + (c || 'none') + '/' + (l || 'none') + ' now=' + token;
+  document.body.textContent = document.title;
+})();
+</script>
+</body>

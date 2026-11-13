@@ -287,6 +287,8 @@ name = "dev_browser_core"
 version = "0.2.0-alpha"
 dependencies = [
  "rusqlite",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
