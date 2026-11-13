@@ -8,8 +8,8 @@ sidebar:
 The Dev Browser is a personal desktop browser for developers. It is written in Rust, draws web pages with embedded Chromium,
 and has the [Home Screen](https://github.com/rmalcomber/home_screen) launcher and tools built in.
 
-:::caution[Planning stage]
-Nothing is released yet. These pages describe the design that is being built, so they say what is *intended*. The
+:::caution[Early development]
+Nothing is released yet. Parts of this are built and run on Windows as an alpha; the rest is design, so these pages say what is *intended* and mark what works. The
 [roadmap](/dev_browser/roadmap/) shows where things stand.
 :::
 
@@ -21,6 +21,10 @@ you have opened) live in other tabs or sites. The Dev Browser puts the identitie
 and puts the tools one keystroke away.
 
 It is **not** a new rendering engine, a Chrome clone or an extension platform.
+
+## The longer version
+
+The [vision](/dev_browser/welcome/vision/) page explains the problems this is meant to solve, what a workspace is, how search stays private and what the first release should feel like.
 
 ## Principles
 

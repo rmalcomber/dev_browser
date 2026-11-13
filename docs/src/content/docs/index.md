@@ -16,7 +16,7 @@ hero:
 ## What is {{name}}?
 
 {{name}} is a personal desktop browser for developers, written in Rust and drawing pages with embedded Chromium. It is
-in the planning stage: these pages describe what is being built.
+in early development on Windows: workspaces, the sidebar, tabs and navigation work in an unreleased alpha, while the launcher, tools and split view are still design. These pages say which is which.
 
 - **Workspaces.** Work, company and personal live in one window, each with its own logins and data.
 - **A launcher you own.** `Ctrl+P` searches the workspace you are in, and only that, unless you widen it.

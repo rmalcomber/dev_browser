@@ -5,8 +5,8 @@ sidebar:
   order: 2
 ---
 
-:::note[Planned design]
-This is the intended architecture from the design spec. Items marked *to validate* depend on the M0 feasibility spike.
+:::note[Partly built]
+The parts marked built in the table at the end exist in the alpha. The rest is the intended design from the specification.
 :::
 
 A trusted TypeScript shell draws the interface. Everything that touches data goes through a narrow typed interface into
@@ -55,6 +55,12 @@ application-data/
 Workspaces are keyed by generated IDs, never by their names. There are no cross-database transactions, so operations are
 designed to be repeatable or recoverable.
 
+## How it is built today
+
+The Rust code is split in two. `core` knows nothing about Chromium: it holds the data, decides what the shell may do, and answers every request with replies and **effects** (show this tab, destroy that view, delete this workspace's data). `host` is the only part that touches CEF; it carries out effects and feeds events (a title changed, a download started) back to core. One thread owns all of it.
+
+The shell is a small Preact page served from `app://shell`. It talks to the app over a narrow message channel that exists only for that page; the app re-checks who sent every message. The shell never names a file, a tab of another workspace, or a path: core rejects what it did not offer. Tabs are records in the workspace's own database, and a tab's page (its view) is disposable: core keeps at most eight alive and recreates the rest from the record.
+
 ## Technology
 
 | Area | Direction | Status |
@@ -65,5 +71,6 @@ designed to be repeatable or recoverable.
 | Data | SQLite per workspace by responsibility | Agreed |
 | UI | Reuse Home Screen TypeScript concepts | Agreed intention |
 | Tool isolation | Restricted model designed up front | Required; format deferred |
+| Built so far | Workspaces, per-workspace storage, sidebar, tabs, navigation, error pages, downloads, restore | M1, unreleased alpha |
 
 See [privacy and security](/dev_browser/reference/privacy-and-security/) for the trust boundaries.

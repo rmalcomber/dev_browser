@@ -32,7 +32,7 @@ export default defineConfig({
       ],
       plugins: [starlightLinksValidator({ errorOnRelativeLinks: false, errorOnLocalLinks: false })],
       sidebar: [
-        { label: 'Welcome', items: ['welcome/about', 'welcome/features'] },
+        { label: 'Welcome', items: ['welcome/about', 'welcome/vision', 'welcome/features'] },
         { label: 'Getting started', items: [{ autogenerate: { directory: 'getting-started' } }] },
         { label: 'Guides', items: [{ autogenerate: { directory: 'guides' } }] },
         { label: 'Reference', items: [{ autogenerate: { directory: 'reference' } }] },
