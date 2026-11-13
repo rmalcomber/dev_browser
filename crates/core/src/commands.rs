@@ -11,9 +11,11 @@ use std::sync::OnceLock;
 /// A key, independent of the operating system's key codes (the host maps those).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
-    /// A letter (lowercase) or digit.
+    /// A letter (lowercase), a digit, or `.`.
     Char(char),
     Tab,
+    Left,
+    Right,
     PageUp,
     PageDown,
     Escape,
@@ -51,6 +53,8 @@ impl Chord {
             "pagedown" => Key::PageDown,
             "esc" | "escape" => Key::Escape,
             "enter" => Key::Enter,
+            "left" => Key::Left,
+            "right" => Key::Right,
             f if f.len() >= 2
                 && f.starts_with('f')
                 && f[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) =>
@@ -59,7 +63,7 @@ impl Chord {
             }
             c if c.chars().count() == 1
                 && c.chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) =>
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.') =>
             {
                 Key::Char(c.chars().next().unwrap())
             }
@@ -100,6 +104,8 @@ impl Chord {
             Key::PageDown => s.push_str("PageDown"),
             Key::Escape => s.push_str("Esc"),
             Key::Enter => s.push_str("Enter"),
+            Key::Left => s.push_str("Left"),
+            Key::Right => s.push_str("Right"),
             Key::F(n) => s.push_str(&format!("F{n}")),
         }
         s
@@ -170,6 +176,16 @@ pub const COMMANDS: &[Command] = &[
         "Take the tab out of its group",
         ["ctrl+shift+u"]
     ),
+    cmd!("nav.back", "Back", ["alt+left"]),
+    cmd!("nav.forward", "Forward", ["alt+right"]),
+    cmd!("nav.reload", "Reload", ["f5", "ctrl+r"]),
+    cmd!(
+        "nav.reload.hard",
+        "Reload, ignoring the cache",
+        ["ctrl+shift+r"]
+    ),
+    cmd!("nav.stop", "Stop loading", ["ctrl+."]),
+    cmd!("nav.address", "Go to the address bar", ["ctrl+l"]),
     cmd!("workspace.new", "New workspace", ["alt+n"]),
     cmd!("workspace.next", "Next workspace", ["alt+pagedown"]),
     cmd!("workspace.prev", "Previous workspace", ["alt+pageup"]),
@@ -233,6 +249,9 @@ mod tests {
             ("esc", "Esc"),
             ("escape", "Esc"),
             ("enter", "Enter"),
+            ("alt+left", "Alt+Left"),
+            ("ALT+RIGHT", "Alt+Right"),
+            ("ctrl+.", "Ctrl+."),
         ] {
             let c = Chord::parse(text).unwrap();
             assert_eq!(c.display(), shown, "{text}");
@@ -253,6 +272,8 @@ mod tests {
             "ctrl+é",
             "ctrl+-",
             "+t",
+            "ctrl+..",
+            "ctrl+up",
         ] {
             assert!(Chord::parse(bad).is_err(), "{bad:?}");
         }

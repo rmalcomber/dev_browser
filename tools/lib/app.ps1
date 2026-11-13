@@ -132,12 +132,23 @@ function Send-Keys([string]$chord) {
   for ($i = $mods.Count - 1; $i -ge 0; $i--) { [Win]::keybd_event($mods[$i], 0, 2, [UIntPtr]::Zero) }
 }
 
-# Type text as real key presses (letters, digits, space, and shift for capitals).
+# Characters that are not letters or digits, as (shift, virtual key) on a US keyboard layout.
+$script:Punct = @{ '.' = @(0, 0xBE); ',' = @(0, 0xBC); '/' = @(0, 0xBF); ';' = @(0, 0xBA); '=' = @(0, 0xBB); '-' = @(0, 0xBD); "'" = @(0, 0xDE)
+  ':' = @(1, 0xBA); '?' = @(1, 0xBF); '_' = @(1, 0xBD); '+' = @(1, 0xBB); '&' = @(1, 0x37); '%' = @(1, 0x35); '#' = @(1, 0x33); '(' = @(1, 0x39); ')' = @(1, 0x30); '!' = @(1, 0x31) }
+
+# Type text as real key presses (letters, digits, space, common punctuation; shift for capitals). Assumes a US keyboard layout.
 function Send-Text([string]$text) {
   foreach ($ch in $text.ToCharArray()) {
     $s = [string]$ch
+    Ensure-Foreground
     if ($s -cmatch '[A-Z]') { Send-Keys ("shift+" + $s.ToLower()) }
     elseif ($s -eq ' ') { Send-Keys 'space' }
+    elseif ($script:Punct.ContainsKey($s)) {
+      $p = $script:Punct[$s]
+      if ($p[0]) { [Win]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero) }
+      [Win]::keybd_event([byte]$p[1], 0, 0, [UIntPtr]::Zero); [Win]::keybd_event([byte]$p[1], 0, 2, [UIntPtr]::Zero)
+      if ($p[0]) { [Win]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero) }
+    }
     else { Send-Keys $s }
     Start-Sleep -Milliseconds 40
   }

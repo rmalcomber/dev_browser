@@ -1,15 +1,15 @@
 # Record the app's client area at 60 fps while sending timed keys, then report every colour state the regions went through.
 # The engine of the S8 check ("switching never shows a frame of the old workspace") and of any flicker or flash question.
-#   tools\record.ps1 -Page colours.html -Keys "3@1500,2@3000" -Seconds 5 -Expect "K|R,K|B,K|G"
+#   tools\record.ps1 -Page colours.html -Keys "3@1500,2@3000" -Seconds 5 -Expect "R,B,G"
 # -Keys is a comma list of chord@milliseconds-after-recording-starts (see Send-Keys in lib\app.ps1: ctrl+3, esc, f6 ...).
-# -Regions are width fractions as in analyze-frames.js (default: the shell strip, then the page). Needs ffmpeg and node on PATH.
+# -Regions are width fractions as in analyze-frames.js (default: the page area; the sidebar has live content, so it is not watched). Needs ffmpeg and node on PATH.
 # Exit code 1 if a frame was not one of -Expect. Pictures and raw frames go to the temp folder and are deleted.
 param(
   [string]$Url = 'https://example.com/',
   [string]$Page = '',
   [string]$Keys = '',
   [int]$Seconds = 6,
-  [string]$Regions = '0.02-0.12,0.3-0.95',
+  [string]$Regions = '0.3-0.95',
   [string]$Expect = '',
   [string[]]$AppArgs = @()
 )

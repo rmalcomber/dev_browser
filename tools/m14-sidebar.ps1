@@ -5,7 +5,7 @@
 #   - group and ungroup shortcuts run.
 # (The S8 no-flash check is tools\s8-switch.ps1; S11, collapsed workspaces showing only a name and an icon, is a UI test in
 # ui\src\Sidebar.test.tsx and a core test in crates\core\src\backend.rs.)
-# The sidebar's rows sit at fixed positions from the top (workspace rows) and its footer at fixed distances from the bottom edge
+# The sidebar's rows sit at fixed positions from the top (below the navigation bar: workspace row 1 at y 119) and its footer at fixed distances from the bottom edge
 # (ui\src\style.css); if the layout changes, update the numbers below. Takes over the mouse and keyboard (about 40 seconds).
 . "$PSScriptRoot\lib\app.ps1"
 $failures = @()
@@ -39,14 +39,14 @@ try {
   Send-Keys 'alt+n'; Start-Sleep -Milliseconds 800; Send-Text 'Second'; Send-Keys 'enter'; Start-Sleep -Milliseconds 2500
   if (Wait-Frame $app $PURPLE) { Pass 'a new workspace got the next palette colour and its page is framed in it (purple)' } else { Fail 'the new workspace page has no purple frame' }
 
-  # the chevron of the first workspace (row 1, y 53): expands it without switching
+  # the chevron of the first workspace (row 1, y 119): expands it without switching
   $before = (Shown $app).Count
-  Click-Client $app 20 53; Start-Sleep -Milliseconds 1000
+  Click-Client $app 20 119; Start-Sleep -Milliseconds 1000
   if ((Shown $app).Count -eq $before) { Pass 'the chevron expanded a workspace without switching to it (no page was shown)' } else { Fail 'clicking the chevron switched workspace' }
   if (Near (Frame-Colour $app) $PURPLE) { Pass 'and the displayed page is still the second workspace one' } else { Fail 'the displayed page changed when only a chevron was clicked' }
 
-  # its tab is now listed under it (row 2, y 81): clicking it switches to that workspace
-  Click-Client $app 100 81; Start-Sleep -Milliseconds 1200
+  # its tab is now listed under it (y 147): clicking it switches to that workspace
+  Click-Client $app 100 147; Start-Sleep -Milliseconds 1200
   $last = (Shown $app)[-1]
   if ($last.Ws -eq $first.Ws -and $last.Tab -eq $first.Tab) { Pass 'clicking a tab listed under another workspace switched to that workspace and tab' } else { Fail "clicking the tab showed $($last.Ws), expected $($first.Ws)" }
   if (Wait-Frame $app $BLUE) { Pass 'the frame followed: blue again' } else { Fail 'the frame did not follow the switch back to the first workspace' }

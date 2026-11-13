@@ -1,7 +1,7 @@
 # S8 check (security-acceptance-tests.md): switching workspace or tab never flashes previously visible content.
 #   Three workspaces open the same address but show three colours (red, blue, green: each workspace is a separate profile with its own
 #   localStorage). The window is recorded at 60 fps while the app cycles Alt+PageDown through them; the frames must go round
-#   red -> blue -> green -> red in order, each change moving to the NEXT colour, with at most a dark neutral gap in between: a frame of the
+#   red -> blue -> green -> red in order (only the page area is watched: the sidebar has live content), each change moving to the NEXT colour, with at most a dark neutral gap in between: a frame of the
 #   previous workspace reappearing after the new one was shown is a failure. A second recording does the same for new tabs and closing the
 #   visible tab (freshly created and destroyed views), and a third for the workspace-colour frame.
 # Takes over the mouse and keyboard (about 1 minute). Needs a build, node and ffmpeg. Exit code 0 = pass.
@@ -42,7 +42,7 @@ try {
   Start-Sleep -Milliseconds 1500
   foreach ($i in 1..$Switches) { Send-Keys 'alt+pagedown'; Start-Sleep -Milliseconds $GapMs }
   # the active workspace was Three (green) at the start: next is One (red), then Two (blue), then Three...
-  $code = Wait-Recording $rec @('--cycle', 'K|G,K|R,K|B', '--gap', 'K|K', '--min-states', ($Switches + 1))
+  $code = Wait-Recording $rec @('--regions', '0.3-0.95', '--cycle', 'G,R,B', '--gap', 'K', '--min-states', ($Switches + 1))
   if ($code -eq 0) { Pass "S8: $Switches workspace switches never showed a frame of the previous workspace" } else { Fail 'S8: a workspace switch showed a frame out of order (see the analyser output above)' }
 
   # ---- 2: new tab and close tab on one workspace (fresh views come and go), all the same colour
@@ -50,7 +50,7 @@ try {
   $rec = Start-Recording $app 14
   Start-Sleep -Milliseconds 1200
   foreach ($i in 1..5) { Send-Keys 'ctrl+t'; Start-Sleep -Milliseconds 1100; Send-Keys 'ctrl+w'; Start-Sleep -Milliseconds 900 }
-  $code = Wait-Recording $rec @('--cycle', 'K|G', '--gap', 'K|K')
+  $code = Wait-Recording $rec @('--regions', '0.3-0.95', '--cycle', 'G', '--gap', 'K')
   if ($code -eq 0) { Pass 'S8: creating and closing tabs showed nothing but the page colour and a dark gap' } else { Fail 'S8: creating or closing a tab flashed something else (see above)' }
 }
 catch { if ($_.Exception.Message -ne 'setup failed') { Fail "script error: $($_.Exception.Message)" } }

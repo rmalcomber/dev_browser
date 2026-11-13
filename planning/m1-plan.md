@@ -128,6 +128,11 @@ Address bar and search-or-URL entry, back, forward, reload, stop, loading state,
 open uses the destination's context, never the source's credentials (S10).
 **Done when:** normal browsing works in two workspaces and S10 passes.
 
+**Status: done 2026-11-13** (see the M1.5 entry in `docs/ai/decisions.md`). Address bar and search-or-address entry decided in core (`address.rs`, 11
+tests, hostile inputs), back, forward, reload, stop and focus-address as commands with shortcuts, per-tab loading state, title and address over
+IPC, favicons fetched in the tab's own context and gated by core, and `tabs.open_in`. `tools\m15-navigation.ps1` on the real window covers
+browsing in two workspaces and S10 in both directions, and fails when the destination's profile is not used.
+
 ### M1.6 Safety nets (L)
 Own error pages for load failures and renderer crashes; certificate errors shown, never bypassed (S12, minimal version); popup and
 new-window policy (block by default, user-initiated allowed into the same workspace); **app-owned JavaScript dialogs and permission

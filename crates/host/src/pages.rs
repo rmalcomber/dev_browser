@@ -7,7 +7,7 @@
 
 use crate::{
     handlers::{HostClient, Role},
-    ipc, layout, profile, state,
+    ipc, layout, navigation, profile, state,
     state::TabView,
 };
 use cef::*;
@@ -31,6 +31,12 @@ pub fn execute(effect: Effect) {
         Effect::DeleteWorkspace(ws) => delete_workspace(&ws),
         Effect::FocusPage => focus_page(),
         Effect::FocusShell => focus_shell("sidebar"),
+        Effect::FocusAddress => focus_shell("address"),
+        Effect::Navigate { tab, url } => navigation::navigate(&tab, &url),
+        Effect::Back => navigation::back(),
+        Effect::Forward => navigation::forward(),
+        Effect::Reload { hard } => navigation::reload(hard),
+        Effect::Stop => navigation::stop(),
         Effect::NewWorkspaceForm => focus_shell("new-workspace"),
     }
 }
@@ -63,6 +69,7 @@ fn set_accent(ws: &Id, colour: u32) {
 /// Show a tab, creating its view first if it has none (and its workspace's profile before that, if this is the first tab shown from it).
 fn show(ws: &Id, tab: &Id, url: &str) {
     println!("[host] tab {tab}: shown (workspace {ws})");
+    navigation::shown(tab, url);
     let (has_view, ready) = state::with(|s| {
         s.shown = Some(tab.clone());
         (s.tabs.contains_key(tab), s.ready.contains(ws))
@@ -247,6 +254,7 @@ fn destroy_view(tab: &Id) {
         tv
     });
     println!("[host] tab {tab}: view destroyed");
+    navigation::forget(tab);
     if let Some(tv) = removed {
         close_view(&tv.wrapper, &tv.view);
     }

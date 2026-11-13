@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   PALETTE,
   activateWorkspace,
+  addressFocus,
+  go,
+  nav,
+  openIn,
   activeWorkspace,
   closeTab,
   collapseGroup,
@@ -127,6 +131,7 @@ function TabRow(props: { tab: Tab; workspace: string; active: boolean; selected:
           else if (!selected) selectTab(tab.id);
         }}
       >
+        {tab.icon ? <img class="fav" src={tab.icon} alt="" width="16" height="16" /> : <span class="fav blank" aria-hidden="true" />}
         <span class="name">{tabLabel(tab)}</span>
       </button>
       {active && (
@@ -259,6 +264,64 @@ export function WorkspaceItem(props: { w: Workspace; renamingGroup: string | nul
   );
 }
 
+/** Back, forward, reload or stop, and the address bar (search or address, decided by the app). */
+function NavBar() {
+  const n = nav.value;
+  const field = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  // Ctrl+L: the app asked for the address bar
+  useEffect(() => {
+    if (addressFocus.value === 0) return;
+    field.current?.focus();
+    field.current?.select();
+  }, [addressFocus.value]);
+  const shown = draft ?? (n && n.url !== 'about:blank' ? n.url : '');
+  const loading = !!n?.loading;
+  return (
+    <div class="navbar">
+      <div class="navbtns" role="group" aria-label="Navigation">
+        <button type="button" aria-label="Back" title="Back (Alt+Left)" disabled={!n?.canBack} onClick={() => runCommand('nav.back')}>
+          {'\u25C2'}
+        </button>
+        <button type="button" aria-label="Forward" title="Forward (Alt+Right)" disabled={!n?.canForward} onClick={() => runCommand('nav.forward')}>
+          {'\u25B8'}
+        </button>
+        <button
+          type="button"
+          aria-label={loading ? 'Stop' : 'Reload'}
+          title={loading ? 'Stop (Ctrl+.)' : 'Reload (F5)'}
+          disabled={!n}
+          onClick={() => runCommand(loading ? 'nav.stop' : 'nav.reload')}
+        >
+          {loading ? '\u2715' : '\u27F3'}
+        </button>
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const text = draft ?? shown;
+          if (text.trim()) go(text);
+          setDraft(null);
+        }}
+      >
+        <input
+          ref={field}
+          class="address"
+          value={shown}
+          placeholder="Search or type an address"
+          aria-label="Address"
+          spellcheck={false}
+          autocomplete="off"
+          onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+          onFocus={(e) => (e.target as HTMLInputElement).select()}
+          onBlur={() => setDraft(null)}
+        />
+      </form>
+      {loading && <div class="loadbar" role="progressbar" aria-label="Loading" />}
+    </div>
+  );
+}
+
 export function Sidebar() {
   const [mode, setMode] = useState<Mode>('none');
   const [newColour, setNewColour] = useState(PALETTE[0]);
@@ -292,6 +355,8 @@ export function Sidebar() {
       <h1>
         The Dev Browser <small>alpha</small>
       </h1>
+
+      <NavBar />
 
       <ul class="tree" role="tree">
         {list.map((w) => (
@@ -385,6 +450,17 @@ export function Sidebar() {
             >
               + New workspace
             </button>
+            {list.length > 1 && nav.value && /^https?:/i.test(nav.value.url) && (
+              <div class="row" role="group" aria-label="Open this page in">
+                {list
+                  .filter((w) => w.id !== activeWorkspace.value)
+                  .map((w) => (
+                    <button type="button" class="openin" title={'Open this page in ' + w.name + ' (its own logins)'} onClick={() => openIn(w.id, nav.value!.url)}>
+                      {'\u2192 ' + w.name}
+                    </button>
+                  ))}
+              </div>
+            )}
             {active && (
               <div class="row" role="group" aria-label={`Manage ${active.name}`}>
                 <button type="button" onClick={() => setMode('rename')}>

@@ -2,7 +2,7 @@
 // Promoted from the M0 spike's flash-analyze.js (which hard-coded a left|right split of two panes). This is the S8 regression check's engine
 // (planning/security-acceptance-tests.md: switching workspace never shows a frame of the old one).
 //
-//   node tools/analyze-frames.js <raw file> <width> <height> [--regions 0.02-0.12,0.3-0.95] [--expect K|R,K|B] [--fps 60]
+//   node tools/analyze-frames.js <raw file> <width> <height> [--regions 0.3-0.95] [--expect K|R,K|B] [--fps 60]
 //                                [--cycle K|R,K|B,K|G [--gap K|K] [--min-states N]]
 //
 // --cycle is the S8 check ("switching never shows a frame of the previous workspace"): the states must go round the listed cycle in order,
@@ -16,7 +16,7 @@ const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf('--' + name); return i >= 0 ? argv[i + 1] : dflt; };
 const [file, W, H] = [argv[0], +argv[1], +argv[2]];
 if (!file || !W || !H) { console.error('usage: node analyze-frames.js <raw> <width> <height> [--regions a-b,c-d] [--expect X|Y,...] [--fps N]'); process.exit(2); }
-const regions = opt('regions', '0.02-0.12,0.3-0.95').split(',').map((r) => r.split('-').map(Number));
+const regions = opt('regions', '0.3-0.95').split(',').map((r) => r.split('-').map(Number));
 const expect = opt('expect', '') ? new Set(opt('expect', '').split(',')) : null;
 const fps = +opt('fps', 60);
 const buf = fs.readFileSync(file), size = W * H * 3, n = Math.floor(buf.length / size);

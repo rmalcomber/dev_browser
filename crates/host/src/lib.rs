@@ -2,10 +2,12 @@
 //! executes what core decides. One UI thread, handlers split by concern (see planning/m1-plan.md, section 4).
 
 mod app;
+mod b64;
 mod handlers;
 mod ipc;
 mod keys;
 mod layout;
+mod navigation;
 mod pages;
 mod profile;
 mod render;

@@ -15,6 +15,7 @@
 //!   only, so the titles and addresses of a collapsed workspace never reach the shell at all (S11). Activating a workspace expands it and
 //!   collapses the others; the chevron expands or collapses one without switching.
 
+use crate::address;
 use crate::commands::{self, Source};
 use crate::data::{DataDir, DataError};
 use crate::group;
@@ -44,7 +45,13 @@ pub const TABS_GROUP: &str = "tabs.group";
 pub const GROUPS_NEW: &str = "groups.new";
 pub const GROUPS_RENAME: &str = "groups.rename";
 pub const GROUPS_COLLAPSE: &str = "groups.collapse";
+pub const NAV_GO: &str = "nav.go";
+pub const TABS_OPEN_IN: &str = "tabs.open_in";
 pub const COMMAND: &str = "command";
+
+/// Largest favicon, as a `data:image/png;base64,` address, that is kept and sent to the shell.
+pub const MAX_FAVICON_CHARS: usize = 32 * 1024;
+const FAVICON_PREFIX: &str = "data:image/png;base64,";
 
 /// The name a new group starts with; the user renames it.
 const NEW_GROUP_NAME: &str = "Group";
@@ -69,9 +76,15 @@ pub enum Effect {
         colour: u32,
     },
     /// The workspace was recoloured: redraw the frame of its existing views.
-    SetAccent { workspace: Id, colour: u32 },
+    SetAccent {
+        workspace: Id,
+        colour: u32,
+    },
     /// Destroy this tab's view. The record is kept (a discard) or already gone (a close): the host does not need to know which.
-    DestroyView { workspace: Id, tab: Id },
+    DestroyView {
+        workspace: Id,
+        tab: Id,
+    },
     /// Close all of this workspace's views, release its profile, then remove its folders. The record is already gone.
     DeleteWorkspace(Id),
     /// Give keyboard focus to the visible page.
@@ -80,6 +93,20 @@ pub enum Effect {
     FocusShell,
     /// Give keyboard focus to the sidebar and open its "new workspace" name field.
     NewWorkspaceForm,
+    /// Load this address in this tab (the shown one). The address has been through `address::resolve`.
+    Navigate {
+        tab: Id,
+        url: String,
+    },
+    /// Navigation of the shown tab.
+    Back,
+    Forward,
+    Reload {
+        hard: bool,
+    },
+    Stop,
+    /// Give keyboard focus to the address bar.
+    FocusAddress,
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -109,6 +136,8 @@ struct TabOut {
     url: String,
     position: u32,
     group: Option<String>,
+    /// The page's icon as a `data:image/png;base64,` address, once the host has fetched it. Only ever sent for expanded workspaces.
+    icon: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -182,6 +211,19 @@ struct MoveIn {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct GoIn {
+    input: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpenInIn {
+    workspace: String,
+    url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExpandIn {
     id: String,
     expanded: bool,
@@ -237,6 +279,8 @@ enum Action {
     SelectTab(Id),
     MoveTab { id: Id, position: u32 },
     Expand { id: Id, expanded: bool },
+    Go(String),
+    OpenIn { workspace: Id, url: String },
     OpenTab { workspace: Id, id: Id },
     NewGroup(Id),
     RenameGroup { id: Id, name: String },
@@ -260,6 +304,8 @@ pub struct Backend {
     start_url: String,
     /// Tabs that have a view, least recently shown first, with their workspace.
     live: Vec<(Id, Id)>,
+    /// Favicons by tab (session only, never stored): `data:image/png;base64,` addresses the host made from the page's icon.
+    favicons: HashMap<Id, String>,
     orphans_removed: Vec<Id>,
 }
 
@@ -292,6 +338,7 @@ impl Backend {
             workspace_dbs: HashMap::new(),
             start_url,
             live: Vec::new(),
+            favicons: HashMap::new(),
             orphans_removed,
         })
     }
@@ -376,6 +423,7 @@ impl Backend {
                         url: t.url,
                         position: t.position,
                         group: t.group.map(|g| g.to_string()),
+                        icon: self.favicons.get(&t.id).cloned(),
                     })
                     .collect(),
             });
@@ -535,6 +583,31 @@ impl Backend {
         }
         let outcome = self.close_tab(ws, tab_id, false);
         Some(outcome.unwrap_or_else(|e| Self::user_error("view.closed", e)))
+    }
+
+    /// An outcome with one effect and no replies.
+    fn just(effect: Effect) -> Outcome {
+        Outcome {
+            replies: vec![],
+            effects: vec![effect],
+        }
+    }
+
+    /// The host fetched a tab's favicon (in the tab's own workspace context) and made a PNG `data:` address of it. Kept for the session
+    /// only. Returns the `tabs` reply if the workspace is expanded: a collapsed workspace's icons are not sent either (S11).
+    pub fn tab_favicon(&mut self, ws: &Id, tab_id: &Id, data_url: &str) -> Option<Reply> {
+        if !data_url.starts_with(FAVICON_PREFIX)
+            || data_url.len() > MAX_FAVICON_CHARS
+            || data_url
+                .chars()
+                .any(|c| c.is_control() || c.is_whitespace())
+        {
+            return None;
+        }
+        let id = tab_id.clone();
+        self.with_db(ws, |c| tab::get(c, &id)).ok()?; // only a tab that exists in that workspace
+        self.favicons.insert(tab_id.clone(), data_url.to_string());
+        self.expanded.contains(ws).then(|| self.tabs_reply())
     }
 
     // ---- messages ----
@@ -704,6 +777,17 @@ impl Backend {
                     collapsed: r.collapsed,
                 }
             }
+            NAV_GO => {
+                let r: GoIn = Self::from_json(name, payload)?;
+                Action::Go(r.input)
+            }
+            TABS_OPEN_IN => {
+                let r: OpenInIn = Self::from_json(name, payload)?;
+                Action::OpenIn {
+                    workspace: Self::parse_id(name, &r.workspace)?,
+                    url: r.url,
+                }
+            }
             COMMAND => {
                 let r: IdIn = Self::from_json(name, payload)?;
                 match commands::find(&r.id) {
@@ -749,6 +833,41 @@ impl Backend {
                     workspace: id,
                     colour: w.colour,
                 }]))
+            }
+            Action::Go(input) => {
+                // what was typed becomes an address in core (never in the shell or the host); only the selected tab can be navigated
+                let address = address::resolve(&input).map_err(|e| e.to_string())?;
+                let ws = self.active.clone();
+                let current = self.current(&ws)?;
+                Ok(Outcome {
+                    replies: vec![],
+                    effects: vec![
+                        Effect::Navigate {
+                            tab: current.id,
+                            url: address,
+                        },
+                        Effect::FocusPage,
+                    ],
+                })
+            }
+            Action::OpenIn { workspace, url } => {
+                // Open an address in a new tab of ANOTHER workspace. The new tab belongs to the destination's database, so the host
+                // creates its view in the destination's request context: the source workspace's cookies and logins are never involved (S10).
+                if workspace::get(&self.global, &workspace).is_err() {
+                    return Err("there is no such workspace".into());
+                }
+                if !url::is_restorable(&url) {
+                    return Err("that address cannot be opened in a tab".into());
+                }
+                self.ensure_tabs(&workspace)?;
+                let created = self.with_db(&workspace, |c| tab::create(c, &url, None, None))?;
+                self.set_active(&workspace).map_err(|e| e.to_string())?;
+                self.expanded.clear();
+                self.expanded.insert(workspace.clone());
+                let mut effects = vec![];
+                self.show(&workspace, &created, &mut effects)?;
+                effects.push(Effect::FocusPage);
+                Ok(self.both(effects))
             }
             Action::Expand { id, expanded } => {
                 if workspace::get(&self.global, &id).is_err() {
@@ -840,6 +959,10 @@ impl Backend {
         workspace::delete_record(&mut self.global, id).map_err(|e| e.to_string())?;
         // release everything held for it: its views are the host's to destroy (DeleteWorkspace), its database file is closed here
         self.live.retain(|(w, _)| w != id);
+        let its_tabs = self.with_db(id, tab::list).unwrap_or_default();
+        for t in its_tabs {
+            self.favicons.remove(&t.id);
+        }
         self.workspace_dbs.remove(id);
         self.expanded.remove(id);
         let mut effects = vec![Effect::DeleteWorkspace(id.clone())];
@@ -885,6 +1008,7 @@ impl Backend {
         self.with_db(ws, |c| tab::close(c, id))?;
         let was_live = self.live.iter().any(|(_, t)| t == id);
         self.live.retain(|(_, t)| t != id);
+        self.favicons.remove(id);
         let mut effects = vec![];
         let mut focus = false;
         if was_selected && ws == &self.active {
@@ -939,6 +1063,12 @@ impl Backend {
             }
             "tab.move.down" => self.move_selected(1),
             "tab.move.up" => self.move_selected(-1),
+            "nav.back" => Ok(Self::just(Effect::Back)),
+            "nav.forward" => Ok(Self::just(Effect::Forward)),
+            "nav.reload" => Ok(Self::just(Effect::Reload { hard: false })),
+            "nav.reload.hard" => Ok(Self::just(Effect::Reload { hard: true })),
+            "nav.stop" => Ok(Self::just(Effect::Stop)),
+            "nav.address" => Ok(Self::just(Effect::FocusAddress)),
             "tab.discard" => self.discard_background(),
             "tab.group.new" => {
                 let current = self.current(&ws)?;
@@ -2185,5 +2315,274 @@ mod tests {
                 "{name} {payload}"
             );
         }
+    }
+
+    // ---- M1.5: navigation, open in another workspace (S10), favicons ----
+
+    const PNG: &str = "data:image/png;base64,iVBORw0KGgo=";
+
+    #[test]
+    fn typing_in_the_address_bar_navigates_the_selected_tab_only() {
+        let (_t, mut b) = backend("go");
+        b.startup();
+        let tab = id(&selected(&mut b));
+        let o = send(&mut b, NAV_GO, json!({"input": "example.com/docs"}));
+        assert_eq!(
+            o.effects,
+            vec![
+                Effect::Navigate {
+                    tab: tab.clone(),
+                    url: "https://example.com/docs".into()
+                },
+                Effect::FocusPage
+            ]
+        );
+        assert!(
+            o.replies.is_empty(),
+            "the answer is the page loading, not a reply"
+        );
+        // a search, and localhost
+        let o = send(&mut b, NAV_GO, json!({"input": "rust lifetimes"}));
+        assert!(
+            matches!(&o.effects[0], Effect::Navigate { url, .. } if url == "https://duckduckgo.com/?q=rust%20lifetimes")
+        );
+        let o = send(&mut b, NAV_GO, json!({"input": "localhost:3000"}));
+        assert!(
+            matches!(&o.effects[0], Effect::Navigate { url, .. } if url == "http://localhost:3000")
+        );
+        // the target is always the selected tab of the active workspace, whatever the shell says: there is no way to name another
+        b.run_command("tab.new", Source::Page);
+        let second = id(&selected(&mut b));
+        let o = send(&mut b, NAV_GO, json!({"input": "example.org"}));
+        assert!(matches!(&o.effects[0], Effect::Navigate { tab, .. } if *tab == second));
+        assert!(
+            b.handle(NAV_GO, r#"{"input":"x","tab":"tab-1"}"#).is_err(),
+            "no tab field is accepted"
+        );
+    }
+
+    #[test]
+    fn addresses_that_cannot_be_opened_are_user_errors_with_no_effect() {
+        let (_t, mut b) = backend("goerr");
+        b.startup();
+        for input in [
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "file:///C:/x",
+            "app://shell/index.html",
+            "chrome://settings",
+            "",
+            "   ",
+            "a\nb",
+        ] {
+            let o = send(&mut b, NAV_GO, json!({"input": input}));
+            assert_eq!(first_reply(&o).0, "error", "{input:?}");
+            assert!(o.effects.is_empty(), "{input:?}");
+        }
+        let o = send(&mut b, NAV_GO, json!({"input": "x".repeat(5000)}));
+        assert_eq!(first_reply(&o).0, "error");
+        assert!(matches!(
+            b.handle(NAV_GO, "{}"),
+            Err(Refused::BadPayload { .. })
+        ));
+        assert!(matches!(
+            b.handle(NAV_GO, r#"{"input":5}"#),
+            Err(Refused::BadPayload { .. })
+        ));
+    }
+
+    #[test]
+    fn navigation_commands_become_effects_for_the_host() {
+        let (_t, mut b) = backend("navcmd");
+        b.startup();
+        for (cmd, effect) in [
+            ("nav.back", Effect::Back),
+            ("nav.forward", Effect::Forward),
+            ("nav.reload", Effect::Reload { hard: false }),
+            ("nav.reload.hard", Effect::Reload { hard: true }),
+            ("nav.stop", Effect::Stop),
+            ("nav.address", Effect::FocusAddress),
+        ] {
+            let o = b.run_command(cmd, Source::Page);
+            assert_eq!(o.effects, vec![effect], "{cmd}");
+            assert!(o.replies.is_empty(), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn opening_an_address_in_another_workspace_makes_the_tab_in_that_workspace_and_switches_there()
+    {
+        // S10, the part core decides: the new tab is a record in the DESTINATION's database and the Show effect names the destination
+        // workspace, so the host creates the view in the destination's request context. Nothing of the source workspace is involved.
+        let (_t, mut b) = backend("openin");
+        b.startup();
+        let source = state(&b)["active"].as_str().unwrap().to_string();
+        send(&mut b, CREATE, json!({"name": "Dest", "colour": 0x00AA00}));
+        let dest = id_of(&b, "Dest");
+        send(&mut b, ACTIVATE, json!({"id": source}));
+        let o = send(
+            &mut b,
+            TABS_OPEN_IN,
+            json!({"workspace": dest, "url": "https://bank.example/login"}),
+        );
+        assert_eq!(state(&b)["active"], dest, "switched to the destination");
+        assert_eq!(expanded_names(&mut b), vec!["Dest"]);
+        let new_tab = selected(&mut b);
+        assert!(
+            matches!(&o.effects[0], Effect::Show { workspace, tab, url, colour }
+            if workspace.as_str() == dest && tab.as_str() == new_tab && url == "https://bank.example/login" && *colour == 0x00AA00)
+        );
+        assert_eq!(o.effects.last(), Some(&Effect::FocusPage));
+        assert!(
+            tab_urls(&mut b).contains(&"https://bank.example/login".to_string()),
+            "the destination has the tab"
+        );
+        // the source workspace is untouched: still one tab, its own
+        send(&mut b, ACTIVATE, json!({"id": source}));
+        assert_eq!(tab_urls(&mut b), vec![START]);
+    }
+
+    #[test]
+    fn opening_in_another_workspace_checks_the_address_and_the_workspace() {
+        let (_t, mut b) = backend("openinerr");
+        b.startup();
+        send(&mut b, CREATE, json!({"name": "Dest", "colour": 1}));
+        let dest = id_of(&b, "Dest");
+        for url in [
+            "javascript:alert(1)",
+            "app://shell/index.html",
+            "file:///C:/x",
+            "data:text/html,x",
+            "",
+            "https://exa mple.com/",
+        ] {
+            let o = send(&mut b, TABS_OPEN_IN, json!({"workspace": dest, "url": url}));
+            assert_eq!(first_reply(&o).0, "error", "{url:?}");
+            assert!(o.effects.is_empty(), "{url:?}");
+        }
+        let o = send(
+            &mut b,
+            TABS_OPEN_IN,
+            json!({"workspace": Id::new("ws").to_string(), "url": "https://x.example/"}),
+        );
+        assert_eq!(first_reply(&o).0, "error");
+        assert_eq!(tab_urls(&mut b), vec![START], "no refusal made a tab");
+        assert!(matches!(
+            b.handle(TABS_OPEN_IN, r#"{"workspace":"ws-1"}"#),
+            Err(Refused::BadPayload { .. })
+        ));
+        assert!(matches!(
+            b.handle(
+                TABS_OPEN_IN,
+                r#"{"workspace":"../x","url":"https://x.example/"}"#
+            ),
+            Err(Refused::BadPayload { .. })
+        ));
+    }
+
+    #[test]
+    fn a_favicon_is_kept_for_the_session_and_sent_only_for_expanded_workspaces() {
+        let (_t, mut b) = three_workspaces("favicons");
+        let (a_id, c_id) = (id(&id_of(&b, "Default")), id(&id_of(&b, "C")));
+        let a_tab = {
+            let all: Value = serde_json::from_str(&b.tabs_reply().payload).unwrap();
+            let _ = all;
+            // Default is collapsed (C is active): read its tab through its database by activating, then go back
+            send(&mut b, ACTIVATE, json!({"id": a_id.as_str()}));
+            let t = id(&selected(&mut b));
+            send(&mut b, ACTIVATE, json!({"id": c_id.as_str()}));
+            t
+        };
+        let c_tab = id(&selected(&mut b));
+        // an expanded workspace: the icon is pushed, and appears in its section
+        let reply = b.tab_favicon(&c_id, &c_tab, PNG).expect("expanded: pushed");
+        assert!(reply.payload.contains(PNG));
+        assert_eq!(tabs(&mut b)["tabs"][0]["icon"], PNG);
+        // a collapsed workspace: remembered, but nothing is sent and nothing appears anywhere
+        assert!(
+            b.tab_favicon(&a_id, &a_tab, PNG).is_none(),
+            "collapsed: not pushed"
+        );
+        let all = b.tabs_reply().payload;
+        assert_eq!(
+            all.matches(PNG).count(),
+            1,
+            "only the expanded workspace's icon is in the reply"
+        );
+        // expanding it then shows it
+        send(
+            &mut b,
+            WORKSPACES_EXPAND,
+            json!({"id": a_id.as_str(), "expanded": true}),
+        );
+        assert_eq!(b.tabs_reply().payload.matches(PNG).count(), 2);
+        send(
+            &mut b,
+            WORKSPACES_EXPAND,
+            json!({"id": a_id.as_str(), "expanded": false}),
+        );
+        assert_eq!(
+            b.tabs_reply().payload.matches(PNG).count(),
+            1,
+            "collapsing hides it again"
+        );
+    }
+
+    #[test]
+    fn only_png_data_addresses_of_a_sane_size_for_real_tabs_are_accepted_as_favicons() {
+        let (_t, mut b) = backend("faviconbad");
+        b.startup();
+        let (ws, tab) = (b.active().clone(), id(&selected(&mut b)));
+        for bad in [
+            "https://evil.example/icon.png",
+            "javascript:alert(1)",
+            "data:text/html;base64,PGI+",
+            "data:image/svg+xml;base64,PHN2Zz4=",
+            "data:image/png;base64,AAAA BBBB",
+            "data:image/png;base64,AAAA\nBBBB",
+            "",
+        ] {
+            assert!(b.tab_favicon(&ws, &tab, bad).is_none(), "{bad:?}");
+        }
+        let huge = format!("data:image/png;base64,{}", "A".repeat(MAX_FAVICON_CHARS));
+        assert!(b.tab_favicon(&ws, &tab, &huge).is_none());
+        assert!(
+            b.tab_favicon(&ws, &Id::new("tab"), PNG).is_none(),
+            "a tab that does not exist"
+        );
+        assert!(
+            b.tab_favicon(&Id::new("ws"), &tab, PNG).is_none(),
+            "a workspace that does not exist"
+        );
+        assert!(
+            !b.tabs_reply().payload.contains("data:image"),
+            "nothing was stored"
+        );
+        assert!(b.tab_favicon(&ws, &tab, PNG).is_some());
+    }
+
+    #[test]
+    fn a_favicon_goes_with_its_tab() {
+        let (_t, mut b) = backend("faviconclose");
+        b.startup();
+        let ws = b.active().clone();
+        let first = id(&selected(&mut b));
+        b.tab_favicon(&ws, &first, PNG);
+        b.run_command("tab.new", Source::Page);
+        b.run_command("tab.prev", Source::Page);
+        b.run_command("tab.close", Source::Page); // closes the first tab
+        assert!(
+            !b.tabs_reply().payload.contains("data:image"),
+            "its icon is forgotten with it"
+        );
+        // and with its workspace
+        send(&mut b, CREATE, json!({"name": "Two", "colour": 2}));
+        let two = id(&id_of(&b, "Two"));
+        let t = id(&selected(&mut b));
+        b.tab_favicon(&two, &t, PNG);
+        let other = id_of(&b, "Default");
+        send(&mut b, ACTIVATE, json!({"id": other}));
+        send(&mut b, DELETE, json!({"id": two.as_str()}));
+        assert!(b.favicons.is_empty());
     }
 }

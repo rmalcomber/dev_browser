@@ -27,6 +27,12 @@ The Dev Browser is keyboard-first: every action is a named command with a defaul
 | `Ctrl+Shift+D` | Unload background tabs (their pages are closed to free memory; they reload when you select them) |
 | `Ctrl+Shift+G` | Put the tab in a new group (rename it in the sidebar) |
 | `Ctrl+Shift+U` | Take the tab out of its group (a group with no tabs disappears) |
+| `Ctrl+L` | Go to the address bar (type an address or a search) |
+| `Alt+Left` | Back |
+| `Alt+Right` | Forward |
+| `F5` or `Ctrl+R` | Reload |
+| `Ctrl+Shift+R` | Reload, ignoring the cache |
+| `Ctrl+.` | Stop loading |
 | `Alt+N` | New workspace (opens the name field in the sidebar) |
 | `Alt+PageDown` | Next workspace |
 | `Alt+PageUp` | Previous workspace |

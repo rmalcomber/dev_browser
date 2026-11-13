@@ -14,6 +14,16 @@ pub struct Config {
     pub start_url: String,
 }
 
+/// What the shell is told about a tab (the shown one): see `navigation`.
+#[derive(Clone, Debug, Default)]
+pub struct NavInfo {
+    pub url: String,
+    pub title: String,
+    pub loading: bool,
+    pub can_back: bool,
+    pub can_forward: bool,
+}
+
 /// A tab that has a view right now. The tab's record lives in core; this is only the CEF side.
 pub struct TabView {
     pub workspace: Id,
@@ -37,6 +47,10 @@ pub struct State {
     pub ready: HashSet<Id>,
     /// Tabs with a view.
     pub tabs: HashMap<Id, TabView>,
+    /// Navigation state per tab that has a view.
+    pub nav: HashMap<Id, NavInfo>,
+    /// The favicon address last fetched for each tab, so the same icon is not downloaded again and again.
+    pub favicon_urls: HashMap<Id, String>,
     /// Each workspace's accent colour (0xRRGGBB), drawn as a frame around its pages. Set from core's `Show` and `SetAccent` effects.
     pub accents: HashMap<Id, u32>,
     /// Tabs core asked to show whose workspace profile is still starting: (workspace, tab, url).

@@ -7,7 +7,7 @@ Keep this file short. If a rule matters, it goes here; if it is detail, it goes 
 The Dev Browser is a personal, developer-oriented desktop browser written in Rust, rendering with embedded Chromium (CEF),
 with the Home Screen launcher and tools built in. Its core ideas: vertical tabs grouped by **workspace** (each with its own
 isolated login session and data), a browser-owned `Ctrl+P` launcher, a right-hand widget panel, and two-pane split view.
-Status: the M0 feasibility spike is done and deleted (direct CEF through cef-rs, Alloy-style views; see `planning/m0-feasibility-spike.md`). M1 is under way (`planning/m1-plan.md`): the Cargo workspace, `core` storage, the CEF host (one window, trusted shell from `app://shell`, a page), IPC v0, the S6 hostile-page check and the `tools/` scripts exist. M1.2 (workspaces and storage), M1.3 (tabs, the command registry, window-level shortcuts) and M1.4 (the sidebar tree, groups, the accent frame; S8 and S11) are done. Next is M1.5, navigation chrome. Nothing is released.
+Status: the M0 feasibility spike is done and deleted (direct CEF through cef-rs, Alloy-style views; see `planning/m0-feasibility-spike.md`). M1 is under way (`planning/m1-plan.md`): the Cargo workspace, `core` storage, the CEF host (one window, trusted shell from `app://shell`, a page), IPC v0, the S6 hostile-page check and the `tools/` scripts exist. M1.2 (workspaces and storage), M1.3 (tabs, the command registry, window-level shortcuts) and M1.4 (the sidebar tree, groups, the accent frame; S8 and S11) and M1.5 (navigation chrome, search-or-address entry, favicons, open across workspaces; S10) are done. Next is M1.6, safety nets. Nothing is released.
 
 Start with `planning/README.md`, then `planning/home-screen-browser-spec.md` (the source spec) and
 `planning/roadmap-and-milestones.md`.
@@ -23,6 +23,7 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 | Check (fmt, clippy, tests, ui build) | `tools\build.ps1 check` |
 | Build | `tools\build.ps1 build` |
 | Security check S6 (hostile page; needs a build and node) | `tools\s6-hostile-page.ps1` |
+| M1.5 checks: address bar, back/forward/reload/stop, favicon, S10 across workspaces (about 2 minutes, takes over mouse and keyboard; typing assumes a US layout) | `tools\m15-navigation.ps1` |
 | M1.4 checks: sidebar tree, accent frame, recolour (about 40 seconds, takes over mouse and keyboard) | `tools\m14-sidebar.ps1` |
 | S8 no-flash check: workspace switches and tab churn recorded at 60 fps (about 1 minute; needs ffmpeg and node) | `tools\s8-switch.ps1` |
 | M1.3 check: shortcuts from page, iframe and sidebar; 200 tab cycles; restore (about 6 minutes, takes over mouse and keyboard) | `tools\m13-tabs.ps1` |

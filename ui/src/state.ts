@@ -16,6 +16,18 @@ export interface Tab {
   position: number;
   /** The id of the group the tab is in, or null. */
   group: string | null;
+  /** The page's icon as a `data:image/png;base64,` address, once the app has it (only ever sent for expanded workspaces). */
+  icon?: string | null;
+}
+
+/** What the app says about the shown tab: where it is, what it is called, whether it is loading, and whether it can go back or forward. */
+export interface Nav {
+  tab: string;
+  url: string;
+  title: string;
+  loading: boolean;
+  canBack: boolean;
+  canForward: boolean;
 }
 
 export interface Group {
@@ -42,6 +54,10 @@ export const activeWorkspace = signal<string | null>(null);
  * workspace's titles and addresses never reach this page (S11). Whether a workspace is expanded is simply whether it has a section.
  */
 export const sections = signal<Section[]>([]);
+/** The shown tab's navigation state; null until the app has said. */
+export const nav = signal<Nav | null>(null);
+/** Bumped when the app asks for the address bar to take the focus (Ctrl+L). */
+export const addressFocus = signal(0);
 /** The last user-facing error from the app (a bad name, deleting the only workspace), or null. */
 export const lastError = signal<string | null>(null);
 /** Counters bumped when the app moves focus: into the sidebar (focus a control), out to the page (close open forms), or to the new-workspace field. */
@@ -94,7 +110,8 @@ function isTab(v: unknown): v is Tab {
     typeof t.title === 'string' &&
     typeof t.url === 'string' &&
     typeof t.position === 'number' &&
-    (t.group === null || typeof t.group === 'string')
+    (t.group === null || typeof t.group === 'string') &&
+    (t.icon === undefined || t.icon === null || (typeof t.icon === 'string' && t.icon.startsWith('data:image/png;base64,')))
   );
 }
 
@@ -135,11 +152,24 @@ export function handleMessage(name: string, payload: string): void {
       const s = JSON.parse(payload) as { sections: unknown };
       if (!Array.isArray(s.sections) || !s.sections.every(isSection)) return;
       sections.value = s.sections;
+    } else if (name === 'nav') {
+      const n = JSON.parse(payload) as Nav;
+      if (
+        typeof n.tab !== 'string' ||
+        typeof n.url !== 'string' ||
+        typeof n.title !== 'string' ||
+        typeof n.loading !== 'boolean' ||
+        typeof n.canBack !== 'boolean' ||
+        typeof n.canForward !== 'boolean'
+      )
+        return;
+      nav.value = n;
     } else if (name === 'focus') {
       const f = JSON.parse(payload) as { target?: unknown };
       if (f.target === 'sidebar') sidebarFocus.value++;
       else if (f.target === 'page') pageFocus.value++;
       else if (f.target === 'new-workspace') newWorkspaceRequest.value++;
+      else if (f.target === 'address') addressFocus.value++;
     } else if (name === 'error') {
       const e = JSON.parse(payload) as { message?: unknown };
       lastError.value = typeof e.message === 'string' ? e.message : 'something went wrong';
@@ -173,5 +203,9 @@ export const groupTab = (id: string, group: string | null) => send('tabs.group',
 export const newGroup = (tab: string) => send('groups.new', { tab });
 export const renameGroup = (id: string, name: string) => send('groups.rename', { id, name });
 export const collapseGroup = (id: string, collapsed: boolean) => send('groups.collapse', { id, collapsed });
+/** Navigate the shown tab: what was typed is an address or a search; the app decides which (and refuses what cannot be opened). */
+export const go = (input: string) => send('nav.go', { input });
+/** Open an address in a new tab of another workspace, and switch there: it loads in that workspace's own profile. */
+export const openIn = (workspace: string, url: string) => send('tabs.open_in', { workspace, url });
 /** Run a registered command by id: the same path a keyboard shortcut takes. */
 export const runCommand = (id: string) => send('command', { id });

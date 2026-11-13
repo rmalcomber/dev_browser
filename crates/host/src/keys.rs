@@ -16,6 +16,9 @@ pub fn key_from_vk(vk: i32) -> Option<Key> {
         0x09 => Some(Key::Tab),
         0x0D => Some(Key::Enter),
         0x1B => Some(Key::Escape),
+        0x25 => Some(Key::Left),
+        0x27 => Some(Key::Right),
+        0xBE => Some(Key::Char('.')),
         0x21 => Some(Key::PageUp),
         0x22 => Some(Key::PageDown),
         0x30..=0x39 | 0x41..=0x5A => Some(Key::Char((vk as u8 as char).to_ascii_lowercase())),
@@ -50,7 +53,10 @@ mod tests {
         assert_eq!(key_from_vk(0x75), Some(Key::F(6)));
         assert_eq!(key_from_vk(0x70), Some(Key::F(1)));
         assert_eq!(key_from_vk(0x7B), Some(Key::F(12)));
-        for unmapped in [0x00, 0x08, 0x20, 0x25, 0x60, 0x7C, 0xBA, 0xDB] {
+        assert_eq!(key_from_vk(0x25), Some(Key::Left));
+        assert_eq!(key_from_vk(0x27), Some(Key::Right));
+        assert_eq!(key_from_vk(0xBE), Some(Key::Char('.')));
+        for unmapped in [0x00, 0x08, 0x20, 0x26, 0x28, 0x60, 0x7C, 0xBA, 0xDB] {
             assert_eq!(key_from_vk(unmapped), None, "{unmapped:#x}");
         }
     }
@@ -81,6 +87,21 @@ mod tests {
         );
         assert_eq!(find(0x33, ALT_DOWN, Source::Page), Some("tab.select.3"));
         assert_eq!(find(0x75, 0, Source::Page), Some("focus.cycle"));
+        assert_eq!(find(0x25, ALT_DOWN, Source::Page), Some("nav.back"));
+        assert_eq!(find(0x27, ALT_DOWN, Source::Page), Some("nav.forward"));
+        assert_eq!(find(0x74, 0, Source::Page), Some("nav.reload"), "F5");
+        assert_eq!(find(0x52, CONTROL_DOWN, Source::Page), Some("nav.reload"));
+        assert_eq!(
+            find(0x52, CONTROL_DOWN | SHIFT_DOWN, Source::Page),
+            Some("nav.reload.hard")
+        );
+        assert_eq!(find(0x4C, CONTROL_DOWN, Source::Page), Some("nav.address"));
+        assert_eq!(find(0xBE, CONTROL_DOWN, Source::Page), Some("nav.stop"));
+        assert_eq!(
+            find(0x25, 0, Source::Page),
+            None,
+            "a bare arrow key belongs to the page"
+        );
         assert_eq!(find(0x1B, 0, Source::Shell), Some("focus.page"));
         assert_eq!(find(0x1B, 0, Source::Page), None, "Esc stays with the page");
         // typing: a plain letter, and Shift+letter, never match

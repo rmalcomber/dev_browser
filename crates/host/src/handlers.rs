@@ -1,7 +1,7 @@
 //! Client handlers, split by concern. Every browser view in the app uses `HostClient`; what differs (trusted shell or ordinary page, and
 //! for a page which workspace and tab it belongs to) is carried in the client.
 
-use crate::{ipc, keys, pages, state};
+use crate::{ipc, keys, navigation, pages, state};
 use cef::*;
 use dev_browser_core::commands::{self, Source};
 use dev_browser_core::id::Id;
@@ -49,8 +49,17 @@ wrap_life_span_handler! {
 }
 
 wrap_load_handler! {
-    struct Loading { role: Role }
+    struct Loading { role: Role, tab: String }
     impl LoadHandler {
+        // Loading state and whether the tab can go back or forward: kept per tab, and sent to the shell while the tab is the shown one.
+        fn on_loading_state_change(&self, _b: Option<&mut Browser>, is_loading: i32, can_go_back: i32, can_go_forward: i32) {
+            let Ok(tab) = Id::parse(&self.tab) else { return };
+            navigation::update(&tab, |n| {
+                n.loading = is_loading != 0;
+                n.can_back = can_go_back != 0;
+                n.can_forward = can_go_forward != 0;
+            });
+        }
         fn on_load_end(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>, status: i32) {
             let Some(f) = frame else { return };
             if f.is_main() == 1 { println!("[host] {} loaded (status {status}): {}", self.role.name(), CefString::from(&f.url())); }
@@ -80,6 +89,7 @@ wrap_display_handler! {
             println!("[host] {} title: {}", self.role.name(), log_safe(&t, 600));
             if self.tab.is_empty() { return }
             let (Ok(ws), Ok(tab)) = (Id::parse(&self.workspace), Id::parse(&self.tab)) else { return };
+            navigation::update(&tab, |n| n.title = t.clone());
             let push = state::with(|s| s.backend.as_mut().and_then(|b| b.tab_title(&ws, &tab, &t)));
             if let Some(r) = push { ipc::push_to_shell(r.name, &r.payload); }
         }
@@ -88,8 +98,16 @@ wrap_display_handler! {
             if frame.map(|f| f.is_main()) != Some(1) { return }
             let u = url.map(|u| u.to_string()).unwrap_or_default();
             let (Ok(ws), Ok(tab)) = (Id::parse(&self.workspace), Id::parse(&self.tab)) else { return };
+            navigation::update(&tab, |n| n.url = u.clone());
             let push = state::with(|s| s.backend.as_mut().and_then(|b| b.tab_url(&ws, &tab, &u)));
             if let Some(r) = push { ipc::push_to_shell(r.name, &r.payload); }
+        }
+        // The page announced its icon: fetched in this tab's own browser (so its own workspace's context) and handed to core.
+        fn on_favicon_urlchange(&self, b: Option<&mut Browser>, icon_urls: Option<&mut CefStringList>) {
+            if self.tab.is_empty() { return }
+            let (Some(b), Some(list)) = (b, icon_urls) else { return };
+            let urls = navigation::string_list(list);
+            navigation::favicon_urls_changed(&self.workspace, &self.tab, b, urls);
         }
     }
 }
@@ -182,7 +200,7 @@ wrap_client! {
             ipc::on_message(self.role, frame, message) as i32
         }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(Lifetime::new(self.workspace.clone(), self.tab.clone())) }
-        fn load_handler(&self) -> Option<LoadHandler> { Some(Loading::new(self.role)) }
+        fn load_handler(&self) -> Option<LoadHandler> { Some(Loading::new(self.role, self.tab.clone())) }
         fn display_handler(&self) -> Option<DisplayHandler> { Some(Titles::new(self.role, self.workspace.clone(), self.tab.clone())) }
         fn keyboard_handler(&self) -> Option<KeyboardHandler> { Some(Keys::new(self.role)) }
         fn request_handler(&self) -> Option<RequestHandler> { Some(Requests::new(self.role)) }
