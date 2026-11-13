@@ -35,6 +35,7 @@ The Dev Browser is keyboard-first: every action is a named command with a defaul
 | `Ctrl+.` | Stop loading |
 | `Ctrl+Shift+S` | Save the download that is waiting for an answer |
 | `Ctrl+Shift+X` | Cancel the download that is waiting for an answer |
+| `Ctrl+P` | Open the launcher (search tabs and commands; `Esc` closes it) |
 | `Alt+N` | New workspace (opens the name field in the sidebar) |
 | `Alt+PageDown` | Next workspace |
 | `Alt+PageUp` | Previous workspace |
@@ -56,7 +57,6 @@ so pages keep their own use of it.
 
 | Shortcut | Planned command | When |
 |---|---|---|
-| `Ctrl+P` | Open the launcher (replaces the browser print shortcut) | M2 |
 | `Ctrl+D` | Bookmark the focused page in its workspace | later |
 | `Ctrl+\` | Toggle split view | M4 |
 | `Ctrl+1` / `Ctrl+2` | Focus the left / right pane in split view | M4 |

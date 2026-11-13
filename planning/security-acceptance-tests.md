@@ -5,10 +5,10 @@ any release. None can be written until the code exists; the point now is that th
 
 | # | Test | Milestone | Type | Status |
 | --- | --- | --- | --- | --- |
-| S1 | A Work-scoped launcher request cannot return Personal history, via results, autocomplete, event streams, caches or error messages. | M2 | Automated (Rust) | Planned |
-| S2 | Client-supplied scope is a request, not authority: an out-of-scope workspace id is rejected or narrowed by the broker. | M2 | Automated | Planned |
-| S3 | No global recent-results list contains cross-workspace titles or URLs. | M2 | Automated | Planned |
-| S4 | Broader scope resets to the contextual default on launcher close, and leaves no cached broader results. | M2 | Automated | Planned |
+| S1 | A Work-scoped launcher request cannot return Personal history, via results, autocomplete, event streams, caches or error messages. | M2 | Automated (Rust) | **Partly passing** (2026-11-13, M2.1): tabs and commands, also errors and the open reply (`backend.rs` tests, and `tools\m21-launcher.ps1` on the real window). History and bookmarks are M2.2, so the row stays open |
+| S2 | Client-supplied scope is a request, not authority: an out-of-scope workspace id is rejected or narrowed by the broker. | M2 | Automated | **Passing** (2026-11-13): unknown ids narrow to the active workspace, a search cannot carry a scope, a result outside the current scope cannot be run |
+| S3 | No global recent-results list contains cross-workspace titles or URLs. | M2 | Automated | **Passing** for M2.1 (2026-11-13): core keeps no result list or cache; an earlier wide search leaves nothing behind. Re-check when history arrives (M2.2) |
+| S4 | Broader scope resets to the contextual default on launcher close, and leaves no cached broader results. | M2 | Automated | **Passing** (2026-11-13): Rust tests (close, and run-a-result, both reset) and the real window |
 | S5 | Tool code cannot read browser databases or Chromium session files through the exposed runtime. | M3 | Automated | Planned |
 | S6 | A visited webpage cannot invoke privileged browser IPC or reach launcher internals. | M1 | Automated + manual | First check passing (2026-11-13): `toolss6-hostile-page.ps1` |
 | S7 | `page.selection.read` binds to the focused pane and never collects from both panes. | M3/M4 | Automated | Planned |

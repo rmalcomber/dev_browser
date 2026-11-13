@@ -67,6 +67,7 @@ pub fn changed() {
 }
 
 pub fn relayout() {
+    crate::launcher::keep_inside();
     let (panel, shell, pages, last, generation) = state::with(|s| {
         (
             s.panel.clone(),

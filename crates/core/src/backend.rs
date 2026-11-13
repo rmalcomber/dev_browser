@@ -28,6 +28,13 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+mod launcher;
+use launcher::{DragIn, LauncherState, ScopeIn, SearchIn};
+pub use launcher::{
+    ScopeRequest, LAUNCHER_CLOSE, LAUNCHER_DRAG, LAUNCHER_OPEN, LAUNCHER_RUN, LAUNCHER_SCOPE,
+    LAUNCHER_SEARCH,
+};
+
 pub const PING: &str = "ping";
 pub const LIST: &str = "workspaces.list";
 pub const CREATE: &str = "workspaces.create";
@@ -113,6 +120,15 @@ pub enum Effect {
     Stop,
     /// Give keyboard focus to the address bar.
     FocusAddress,
+    /// Show the launcher overlay, give it the keyboard focus and clear its input.
+    ShowLauncher,
+    /// Hide the launcher and give the focus back to the page.
+    HideLauncher,
+    /// The launcher page was dragged: move the overlay by this much (the host clamps it to the window).
+    MoveLauncher {
+        dx: i32,
+        dy: i32,
+    },
     /// The user answered a download offer: save it (to the app's own folder, under a safe name) or cancel it.
     Download {
         id: u32,
@@ -286,26 +302,71 @@ struct TabGroupIn {
 enum Action {
     Ping(String),
     ListWorkspaces,
-    CreateWorkspace { name: String, colour: u32 },
-    Rename { id: Id, name: String },
-    Colour { id: Id, colour: u32 },
+    CreateWorkspace {
+        name: String,
+        colour: u32,
+    },
+    Rename {
+        id: Id,
+        name: String,
+    },
+    Colour {
+        id: Id,
+        colour: u32,
+    },
     DeleteWorkspace(Id),
     Activate(Id),
     ListTabs,
     NewTab(Option<String>),
     CloseTab(Id),
     SelectTab(Id),
-    MoveTab { id: Id, position: u32 },
-    Expand { id: Id, expanded: bool },
+    MoveTab {
+        id: Id,
+        position: u32,
+    },
+    Expand {
+        id: Id,
+        expanded: bool,
+    },
     Go(String),
-    OpenIn { workspace: Id, url: String },
-    OpenTab { workspace: Id, id: Id },
+    OpenIn {
+        workspace: Id,
+        url: String,
+    },
+    OpenTab {
+        workspace: Id,
+        id: Id,
+    },
     NewGroup(Id),
-    RenameGroup { id: Id, name: String },
-    CollapseGroup { id: Id, collapsed: bool },
-    GroupTab { id: Id, group: Option<Id> },
+    RenameGroup {
+        id: Id,
+        name: String,
+    },
+    CollapseGroup {
+        id: Id,
+        collapsed: bool,
+    },
+    GroupTab {
+        id: Id,
+        group: Option<Id>,
+    },
     Command(&'static str),
-    DownloadDecide { id: u32, save: bool },
+    DownloadDecide {
+        id: u32,
+        save: bool,
+    },
+    LauncherOpen,
+    LauncherClose,
+    LauncherSearch(String),
+    LauncherScope {
+        kind: String,
+        workspaces: Vec<String>,
+    },
+    LauncherRun(String),
+    LauncherDrag {
+        dx: i32,
+        dy: i32,
+    },
 }
 
 /// A user-facing failure (shown in the shell), as opposed to a `Refused` protocol violation.
@@ -327,6 +388,7 @@ pub struct Backend {
     favicons: HashMap<Id, String>,
     /// Downloads offered to the user and not yet answered (ids made by the host). The shell can only answer these.
     offers: HashSet<u32>,
+    launcher: LauncherState,
     orphans_removed: Vec<Id>,
 }
 
@@ -361,6 +423,7 @@ impl Backend {
             live: Vec::new(),
             favicons: HashMap::new(),
             offers: HashSet::new(),
+            launcher: LauncherState::default(),
             orphans_removed,
         })
     }
@@ -884,6 +947,33 @@ impl Backend {
                     url: r.url,
                 }
             }
+            LAUNCHER_OPEN => {
+                Self::no_payload(name, payload)?;
+                Action::LauncherOpen
+            }
+            LAUNCHER_CLOSE => {
+                Self::no_payload(name, payload)?;
+                Action::LauncherClose
+            }
+            LAUNCHER_SEARCH => {
+                let r: SearchIn = Self::from_json(name, payload)?;
+                Action::LauncherSearch(r.query)
+            }
+            LAUNCHER_SCOPE => {
+                let r: ScopeIn = Self::from_json(name, payload)?;
+                Action::LauncherScope {
+                    kind: r.kind,
+                    workspaces: r.workspaces,
+                }
+            }
+            LAUNCHER_RUN => {
+                let r: IdIn = Self::from_json(name, payload)?;
+                Action::LauncherRun(r.id)
+            }
+            LAUNCHER_DRAG => {
+                let r: DragIn = Self::from_json(name, payload)?;
+                Action::LauncherDrag { dx: r.dx, dy: r.dy }
+            }
             DOWNLOAD_DECIDE => {
                 let r: DecideIn = Self::from_json(name, payload)?;
                 Action::DownloadDecide {
@@ -937,6 +1027,14 @@ impl Backend {
                     colour: w.colour,
                 }]))
             }
+            Action::LauncherOpen => Ok(self.launcher_open()),
+            Action::LauncherClose => Ok(self.launcher_close()),
+            Action::LauncherSearch(q) => self.launcher_search(&q),
+            Action::LauncherScope { kind, workspaces } => {
+                self.launcher_set_scope(&kind, &workspaces)
+            }
+            Action::LauncherRun(id) => self.launcher_run(&id),
+            Action::LauncherDrag { dx, dy } => Ok(Self::launcher_drag(dx, dy)),
             Action::DownloadDecide { id, save } => {
                 // only an offer that is still open can be answered, once
                 if !self.offers.remove(&id) {
@@ -1179,6 +1277,7 @@ impl Backend {
             "nav.reload.hard" => Ok(Self::just(Effect::Reload { hard: true })),
             "nav.stop" => Ok(Self::just(Effect::Stop)),
             "nav.address" => Ok(Self::just(Effect::FocusAddress)),
+            "launcher.open" => Ok(self.launcher_open()),
             "download.save" | "download.cancel" => {
                 let save = id == "download.save";
                 // the oldest waiting offer (the lowest id); nothing waiting is not an error
@@ -2808,5 +2907,269 @@ b{}",
         assert!(b.download_offer(&ws, 99, "f").is_none());
         b.download_gone(0);
         assert!(b.download_offer(&ws, 99, "f").is_some());
+    }
+
+    // ---- the launcher (M2.1): S1 (tabs), S2, S3, S4 ----
+
+    /// Two workspaces, Work (active) and Personal, each with a tab whose title is a secret of its own.
+    fn work_and_personal(tag: &str) -> (TempDir, Backend, Id, Id) {
+        let (t, mut b) = backend(tag);
+        b.startup();
+        let work = b.active().clone();
+        send(
+            &mut b,
+            CREATE,
+            json!({"name": "Personal", "colour": 0xa78bfa}),
+        );
+        let personal = b.active().clone();
+        for (ws, title) in [(&work, "Quarterly report"), (&personal, "Divorce lawyer")] {
+            let t = b.with_db(ws, tab::list).unwrap().remove(0);
+            b.with_db(ws, |c| tab::set_title(c, &t.id, title)).unwrap();
+        }
+        send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        (t, b, work, personal)
+    }
+
+    fn results(o: &Outcome) -> Value {
+        let r = o
+            .replies
+            .iter()
+            .find(|r| r.name == "launcher.results")
+            .expect("a results reply");
+        serde_json::from_str(&r.payload).unwrap()
+    }
+
+    fn titles(v: &Value) -> Vec<String> {
+        v["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["title"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn s1_a_work_scoped_search_never_returns_personal_data() {
+        let (_t, mut b, _work, _personal) = work_and_personal("l-s1");
+        let o = send(&mut b, LAUNCHER_OPEN, json!({}));
+        for query in ["", "divorce", "lawyer", "d", "report", "quarterly lawyer"] {
+            let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": query})));
+            let all = serde_json::to_string(&r).unwrap();
+            assert!(
+                !all.contains("Divorce") && !all.contains("lawyer"),
+                "{query:?} leaked Personal: {all}"
+            );
+        }
+        let r = results(&send(
+            &mut b,
+            LAUNCHER_SEARCH,
+            json!({"query": "quarterly"}),
+        ));
+        assert!(titles(&r).contains(&"Quarterly report".to_string()));
+        assert_eq!(r["scope"]["kind"], "contextual");
+        assert!(o.effects.contains(&Effect::ShowLauncher));
+    }
+
+    #[test]
+    fn s1_errors_and_the_open_reply_do_not_carry_other_workspaces_data_either() {
+        let (_t, mut b, _work, personal) = work_and_personal("l-s1-errors");
+        let o = send(&mut b, LAUNCHER_OPEN, json!({}));
+        let text = serde_json::to_string(&results(&o)).unwrap();
+        assert!(!text.contains("Divorce"));
+        // asking to run a Personal tab by id is refused, and the refusal says nothing about what is there
+        let tab = b.with_db(&personal, tab::list).unwrap().remove(0);
+        let o = send(
+            &mut b,
+            LAUNCHER_RUN,
+            json!({"id": format!("tab/{}/{}", personal, tab.id)}),
+        );
+        let (name, v) = first_reply(&o);
+        assert_eq!(name, "error");
+        assert!(!v.to_string().contains("Divorce") && !v.to_string().contains(tab.id.as_str()));
+        assert!(o.effects.is_empty());
+    }
+
+    #[test]
+    fn s2_the_clients_scope_is_a_request_not_authority() {
+        let (_t, mut b, work, personal) = work_and_personal("l-s2");
+        // a made-up workspace id, a malformed one, and a real one are all requests
+        send(
+            &mut b,
+            LAUNCHER_SCOPE,
+            json!({"kind": "selected", "workspaces": ["ws-0123456789abcdef", "nonsense"]}),
+        );
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": ""})));
+        assert_eq!(
+            r["scope"]["workspaces"],
+            json!([work.as_str()]),
+            "an unknown selection narrows to the current workspace, never widens"
+        );
+        send(
+            &mut b,
+            LAUNCHER_SCOPE,
+            json!({"kind": "selected", "workspaces": [personal.as_str()]}),
+        );
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "lawyer"})));
+        assert_eq!(titles(&r), vec!["Divorce lawyer".to_string()]);
+        assert!(!titles(&results(&send(
+            &mut b,
+            LAUNCHER_SEARCH,
+            json!({"query": "quarterly"})
+        )))
+        .contains(&"Quarterly report".to_string()));
+        // an unknown kind is an error and changes nothing
+        let o = send(&mut b, LAUNCHER_SCOPE, json!({"kind": "everything"}));
+        assert_eq!(first_reply(&o).0, "error");
+        // a scope cannot be smuggled into a search
+        assert!(b
+            .handle(LAUNCHER_SEARCH, r#"{"query":"x","scope":{"kind":"all"}}"#)
+            .is_err());
+    }
+
+    #[test]
+    fn s2_a_result_from_a_wider_scope_cannot_be_run_after_the_scope_narrows() {
+        let (_t, mut b, _work, personal) = work_and_personal("l-s2-run");
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "lawyer"})));
+        let id = r["results"][0]["id"].as_str().unwrap().to_string();
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "contextual"}));
+        let o = send(&mut b, LAUNCHER_RUN, json!({"id": id}));
+        assert_eq!(first_reply(&o).0, "error");
+        assert_ne!(b.active(), &personal, "nothing switched");
+        // with the wide scope it does run: it switches to that workspace and shows the tab
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        let o = send(&mut b, LAUNCHER_RUN, json!({"id": id}));
+        assert_eq!(b.active(), &personal);
+        assert!(o.effects.contains(&Effect::HideLauncher));
+        assert!(o
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::Show { workspace, .. } if workspace == &personal)));
+    }
+
+    #[test]
+    fn s3_no_result_list_is_kept() {
+        // core keeps no record of results: a search is computed from the current scope each time and nothing is stored between calls
+        let (_t, mut b, work, _personal) = work_and_personal("l-s3");
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        let wide = titles(&results(&send(
+            &mut b,
+            LAUNCHER_SEARCH,
+            json!({"query": "lawyer"}),
+        )));
+        assert_eq!(wide, vec!["Divorce lawyer".to_string()]);
+        send(&mut b, LAUNCHER_CLOSE, json!({}));
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        let again = titles(&results(&send(
+            &mut b,
+            LAUNCHER_SEARCH,
+            json!({"query": "lawyer"}),
+        )));
+        assert!(
+            again.is_empty(),
+            "the earlier wide search left nothing behind: {again:?}"
+        );
+        assert_eq!(b.scope_ids(), vec![work]);
+    }
+
+    #[test]
+    fn s4_closing_resets_the_scope_to_the_default() {
+        let (_t, mut b, work, _personal) = work_and_personal("l-s4");
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        assert_eq!(b.scope_ids().len(), 2);
+        let o = send(&mut b, LAUNCHER_CLOSE, json!({}));
+        assert_eq!(o.effects, vec![Effect::HideLauncher]);
+        assert_eq!(b.scope_ids(), vec![work.clone()]);
+        // running a result also closes the launcher, and so also resets
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "new tab"})));
+        let cmd = r["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "cmd/tab.new")
+            .unwrap()["id"]
+            .clone();
+        send(&mut b, LAUNCHER_RUN, json!({"id": cmd}));
+        assert_eq!(b.scope_ids(), vec![work]);
+    }
+
+    #[test]
+    fn the_scope_follows_the_active_workspace_when_it_is_contextual() {
+        let (_t, mut b, work, personal) = work_and_personal("l-ctx");
+        assert_eq!(b.scope_ids(), vec![work.clone()]);
+        send(&mut b, ACTIVATE, json!({"id": personal.as_str()}));
+        assert_eq!(b.scope_ids(), vec![personal]);
+    }
+
+    #[test]
+    fn commands_are_found_by_label_and_run() {
+        let (_t, mut b, _work, _personal) = work_and_personal("l-cmd");
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "reload"})));
+        let ids: Vec<&str> = r["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&"cmd/nav.reload"), "{ids:?}");
+        assert!(
+            !ids.contains(&"cmd/launcher.open"),
+            "the launcher is not a result of itself"
+        );
+        let o = send(&mut b, LAUNCHER_RUN, json!({"id": "cmd/nav.reload"}));
+        assert_eq!(
+            o.effects,
+            vec![Effect::HideLauncher, Effect::Reload { hard: false }]
+        );
+        for bad in [
+            "cmd/nope",
+            "cmd/launcher.open",
+            "tab/x/y",
+            "tab/",
+            "whatever",
+            "",
+        ] {
+            let o = send(&mut b, LAUNCHER_RUN, json!({"id": bad}));
+            assert_eq!(first_reply(&o).0, "error", "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn launcher_messages_are_strict_and_bounded() {
+        let (_t, mut b, _w, _p) = work_and_personal("l-strict");
+        assert!(b.handle(LAUNCHER_OPEN, r#"{"x":1}"#).is_err());
+        assert!(b.handle(LAUNCHER_SEARCH, "{}").is_err());
+        assert!(b.handle(LAUNCHER_DRAG, r#"{"dx":"1","dy":2}"#).is_err());
+        let o = send(
+            &mut b,
+            LAUNCHER_SEARCH,
+            json!({"query": "x".repeat(launcher::MAX_QUERY_CHARS + 1)}),
+        );
+        assert_eq!(first_reply(&o).0, "error");
+        let o = send(
+            &mut b,
+            LAUNCHER_DRAG,
+            json!({"dx": 2_000_000_000, "dy": -2_000_000_000}),
+        );
+        assert_eq!(
+            o.effects,
+            vec![Effect::MoveLauncher {
+                dx: 4000,
+                dy: -4000
+            }]
+        );
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": ""})));
+        assert!(r["results"].as_array().unwrap().len() <= 30);
+    }
+
+    #[test]
+    fn the_position_is_saved_and_read_back() {
+        let (_t, b) = backend("l-pos");
+        assert_eq!(b.launcher_pos(), None);
+        b.set_launcher_pos(120, -30);
+        assert_eq!(b.launcher_pos(), Some((120, -30)));
     }
 }

@@ -107,8 +107,11 @@ mod tests {
         // typing: a plain letter, and Shift+letter, never match
         assert_eq!(find(0x54, 0, Source::Page), None);
         assert_eq!(find(0x54, SHIFT_DOWN, Source::Page), None);
-        // Ctrl+P and Ctrl+1 are promised to later milestones and must not match anything yet
-        assert_eq!(find(0x50, CONTROL_DOWN, Source::Page), None);
+        // Ctrl+P opens the launcher; Ctrl+1 is promised to a later milestone and must not match anything yet
+        assert_eq!(
+            find(0x50, CONTROL_DOWN, Source::Page),
+            Some("launcher.open")
+        );
         assert_eq!(find(0x31, CONTROL_DOWN, Source::Page), None);
     }
 }

@@ -7,6 +7,7 @@ mod downloads;
 mod handlers;
 mod ipc;
 mod keys;
+mod launcher;
 mod layout;
 mod navigation;
 mod pages;

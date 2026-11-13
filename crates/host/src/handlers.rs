@@ -11,6 +11,8 @@ use dev_browser_core::id::Id;
 pub enum Role {
     Shell,
     Page,
+    /// The launcher overlay: as trusted as the shell, but it has its own keys (Esc closes it) and its own replies.
+    Launcher,
 }
 
 impl Role {
@@ -18,12 +20,13 @@ impl Role {
         match self {
             Role::Shell => "shell",
             Role::Page => "page",
+            Role::Launcher => "launcher",
         }
     }
 
     fn source(self) -> Source {
         match self {
-            Role::Shell => Source::Shell,
+            Role::Shell | Role::Launcher => Source::Shell,
             Role::Page => Source::Page,
         }
     }
@@ -149,6 +152,14 @@ wrap_keyboard_handler! {
             let Some(e) = event else { return 0 };
             if e.type_ != KeyEventType::RAWKEYDOWN { return 0 }
             let Some(chord) = keys::chord_from_event(e.windows_key_code, e.modifiers) else { return 0 };
+            // The launcher takes only Esc and Ctrl+P (both close it); every other key is for its own search box.
+            if self.role == Role::Launcher {
+                let closes = e.windows_key_code == 0x1B || (e.windows_key_code == 0x50 && e.modifiers & 4 != 0);
+                if !closes { return 0 }
+                let outcome = state::with(|s| s.backend.as_mut().map(|b| b.handle(dev_browser_core::backend::LAUNCHER_CLOSE, "")));
+                if let Some(Ok(o)) = outcome { pages::deliver(o); }
+                return 1;
+            }
             let source = self.role.source();
             let Some(cmd) = commands::lookup(&chord, source) else { return 0 };
             println!("[host] shortcut {} -> {} (from {})", chord.display(), cmd.id, self.role.name());
@@ -194,7 +205,7 @@ wrap_request_handler! {
                     let failed = state::with(|s| s.errors.get(&tab).cloned().or_else(|| s.nav.get(&tab).map(|n| n.url.clone()))).unwrap_or_default();
                     navigation::error_page(&tab, b, Kind::Crashed, &failed, "the page's process ended");
                 }
-                Role::Shell => {
+                Role::Shell | Role::Launcher => {
                     let n = state::with(|s| { s.shell_crashes += 1; s.shell_crashes });
                     if n <= 3 { eprintln!("[host] reloading the shell (attempt {n})"); b.reload(); } else { eprintln!("[host] the shell keeps crashing: not reloading it again"); }
                 }

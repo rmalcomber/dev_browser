@@ -32,10 +32,10 @@ Plan: [m1-plan.md](m1-plan.md) (draft).
 ## M2: Home Screen launcher
 
 - [ ] Reuse the Home Screen launcher UI behind a typed local API.
-- [ ] `Ctrl+P`, draggable position (clamped on resize), `Escape` restores focus.
-- [ ] Workspace-scoped fuzzy search: tabs, history, bookmarks, entries, actions. Scope filtered in Rust before reaching the UI.
+- [x] `Ctrl+P`, draggable position (clamped on resize), `Escape` restores focus. (M2.1)
+- [ ] Workspace-scoped fuzzy search: tabs, history, bookmarks, entries, actions. Scope filtered in Rust before reaching the UI. (tabs and actions done in M2.1; history and bookmarks M2.2, entries M2.3)
 - [ ] `Ctrl+D` bookmarking; bookmarks visible to the launcher without duplication.
-- [ ] Explicit selected/all-workspace search that resets on close.
+- [x] Explicit selected/all-workspace search that resets on close. (M2.1)
 
 **Exit:** a Work-scoped query cannot return Personal data (see security tests).
 

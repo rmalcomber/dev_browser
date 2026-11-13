@@ -115,6 +115,15 @@ $script:VK = @{ esc = 0x1B; enter = 0x0D; tab = 0x09; space = 0x20; backspace = 
   ctrl = 0x11; shift = 0x10; alt = 0x12; '[' = 0xDB; ']' = 0xDD; ',' = 0xBC; '.' = 0xBE; '/' = 0xBF; '-' = 0xBD; '=' = 0xBB }
 foreach ($i in 1..12) { $script:VK["f$i"] = 0x6F + $i }
 
+# Press at (x1,y1), move in steps to (x2,y2), release (client-area pixels at 100% scale): a real mouse drag.
+function Drag-Client($app, [double]$x1, [double]$y1, [double]$x2, [double]$y2) {
+  Ensure-Foreground
+  $c = Get-Client $app
+  [void][Win]::SetCursorPos($c.X + [int]$x1, $c.Y + [int]$y1); Start-Sleep -Milliseconds 200
+  [Win]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 150
+  foreach ($i in 1..12) { [void][Win]::SetCursorPos($c.X + [int]($x1 + ($x2 - $x1) * $i / 12), $c.Y + [int]($y1 + ($y2 - $y1) * $i / 12)); Start-Sleep -Milliseconds 40 }
+  [Win]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 400
+}
 function Get-Vk([string]$name) {
   $n = $name.ToLower()
   if ($script:VK.ContainsKey($n)) { return [byte]$script:VK[$n] }

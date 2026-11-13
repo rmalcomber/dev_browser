@@ -25,6 +25,8 @@ pub fn open() {
         return;
     };
     state::with(|s| s.shell = Some(shell));
+    let launcher_view = crate::launcher::create_view();
+    state::with(|s| s.pending_launcher = launcher_view);
     let mut delegate = Frame::new();
     window_create_top_level(Some(&mut delegate));
 }
@@ -50,6 +52,7 @@ wrap_window_delegate! {
                 let mut vs = View::from(&shell);
                 panel.add_child_view(Some(&mut vs));
             }
+            if let Some(v) = state::with(|s| s.pending_launcher.take()) { crate::launcher::attach(window, v); }
             window.set_title(Some(&CefString::from("The Dev Browser")));
             state::with(|s| { s.panel = Some(panel); s.window = Some(window.clone()); });
             window.show();
@@ -64,7 +67,7 @@ wrap_window_delegate! {
             }
         }
         fn on_window_destroyed(&self, _w: Option<&mut Window>) {
-            state::with(|s| { s.shell = None; s.tabs.clear(); s.contexts.clear(); s.ready.clear(); s.waiting.clear(); s.panel = None; s.window = None; });
+            state::with(|s| { s.shell = None; s.launcher = None; s.launcher_ctl = None; s.tabs.clear(); s.contexts.clear(); s.ready.clear(); s.waiting.clear(); s.panel = None; s.window = None; });
             quit_message_loop();
         }
         fn window_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::ALLOY }

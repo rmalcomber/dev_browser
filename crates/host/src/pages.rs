@@ -8,7 +8,7 @@
 use crate::{
     downloads,
     handlers::{HostClient, Role},
-    ipc, layout, navigation, profile, state,
+    ipc, launcher, layout, navigation, profile, state,
     state::TabView,
 };
 use cef::*;
@@ -40,6 +40,9 @@ pub fn execute(effect: Effect) {
         Effect::Stop => navigation::stop(),
         Effect::NewWorkspaceForm => focus_shell("new-workspace"),
         Effect::Download { id, save } => downloads::decide(id, save),
+        Effect::ShowLauncher => launcher::show(),
+        Effect::HideLauncher => launcher::hide(),
+        Effect::MoveLauncher { dx, dy } => launcher::move_by(dx, dy),
     }
 }
 
@@ -49,7 +52,12 @@ pub fn deliver(outcome: Outcome) {
         execute(effect);
     }
     for reply in outcome.replies {
-        ipc::push_to_shell(reply.name, &reply.payload);
+        // the launcher's results go to the launcher only, everything else to the sidebar
+        if reply.name.starts_with("launcher.") {
+            ipc::push_to_launcher(reply.name, &reply.payload);
+        } else {
+            ipc::push_to_shell(reply.name, &reply.payload);
+        }
     }
 }
 
@@ -230,7 +238,7 @@ fn apply_visibility() {
     layout::changed();
 }
 
-fn focus_page() {
+pub fn focus_page() {
     state::with(|s| s.want_focus = true);
     apply_visibility(); // focuses now if the view exists, otherwise when it is created
                         // the shell abandons any form it had open (Esc and F6 leave it half-typed otherwise)

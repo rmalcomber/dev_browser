@@ -21,7 +21,13 @@ name and an accent colour, drawn around the page it shows.
 - Tabs can be grouped inside a workspace, reordered, and opened in another workspace. Opening a page in another workspace loads it with that workspace's own login; cookies and credentials are never carried across.
 - Workspaces, tabs, groups, the selected tab and the window size come back after a restart.
 
-## The launcher (planned)
+## The launcher (first part works today)
+
+`Ctrl+P` opens a floating launcher over the page, owned by the browser and invisible to websites. It searches the **open tabs and every command**, with forgiving matching: type a few letters of a tab's title or address, or of a command such as "new tab" or "reload", and press `Enter`. `Esc` closes it and returns you to the page. Drag the title bar to move it; it remembers where you left it.
+
+Search stays inside the workspace you are in. To look wider you choose "All workspaces" or pick workspaces yourself, the launcher says so on screen, and the wider search ends the moment the launcher closes. History, bookmarks, saved Home Screen entries and tools come next.
+
+The longer description follows.
 
 `Ctrl+P` opens a floating, draggable, VS Code style launcher owned by the browser, not by the page. It searches the
 tabs, groups, bookmarks, history, Home Screen entries and tools of the workspaces you are working in, and nothing else.

@@ -44,6 +44,10 @@ pub struct State {
     pub window: Option<Window>,
     pub panel: Option<Panel>,
     pub shell: Option<BrowserView>,
+    /// The launcher overlay: its view and the controller that places it above the pages.
+    pub pending_launcher: Option<BrowserView>,
+    pub launcher: Option<BrowserView>,
+    pub launcher_ctl: Option<OverlayController>,
     /// A request context per workspace that has been shown in this run, and which of them are initialised (views may be created).
     pub contexts: HashMap<Id, RequestContext>,
     pub ready: HashSet<Id>,
