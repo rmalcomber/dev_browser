@@ -8,7 +8,7 @@
 //! A result's id is opaque text; `launcher.run` resolves it again against the *current* scope and refuses one that is outside it (S2).
 
 use super::*;
-use crate::{commands, search};
+use crate::{bookmark, commands, history, search};
 
 pub const LAUNCHER_OPEN: &str = "launcher.open";
 pub const LAUNCHER_CLOSE: &str = "launcher.close";
@@ -185,6 +185,77 @@ impl Backend {
         for w in all.iter().filter(|w| ids.contains(&w.id)) {
             // only the databases of workspaces in scope are opened
             let tabs = self.with_db(&w.id, tab::list).unwrap_or_default();
+            let mut known: HashSet<String> = HashSet::new();
+            for t in &tabs {
+                known.insert(t.url.split('#').next().unwrap_or("").to_string());
+            }
+            // bookmarks first (so a history row for the same page is not listed twice)
+            for b in self
+                .with_db(&w.id, |c| Ok(bookmark::all(c)?))
+                .unwrap_or_default()
+            {
+                let title = if b.title.trim().is_empty() {
+                    b.url.clone()
+                } else {
+                    b.title.clone()
+                };
+                let s = [
+                    search::score(query, &title).map(|s| s * 2),
+                    search::score(query, &b.url),
+                ]
+                .into_iter()
+                .flatten()
+                .max();
+                if let Some(s) = s {
+                    known.insert(b.url.split('#').next().unwrap_or("").to_string());
+                    results.push(ResultOut {
+                        id: format!("bm/{}/{}", w.id, b.id),
+                        kind: "bookmark",
+                        title,
+                        subtitle: b.url,
+                        workspace: Some(Self::workspace_ref(w)),
+                        score: s + 8,
+                    });
+                }
+            }
+            // history is only searched, never listed: an empty query shows no history (S3: no recent list)
+            if !query.is_empty() {
+                let mut found: Vec<ResultOut> = Vec::new();
+                for v in self
+                    .with_db(&w.id, |c| Ok(history::all(c)?))
+                    .unwrap_or_default()
+                {
+                    if known.contains(&v.url) {
+                        continue;
+                    }
+                    let title = if v.title.trim().is_empty() {
+                        v.url.clone()
+                    } else {
+                        v.title.clone()
+                    };
+                    let s = [
+                        search::score(query, &title).map(|s| s * 2),
+                        search::score(query, &v.url),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .max();
+                    if let Some(s) = s {
+                        found.push(ResultOut {
+                            id: format!("hist/{}/{}", w.id, v.id),
+                            kind: "history",
+                            title,
+                            subtitle: v.url,
+                            workspace: Some(Self::workspace_ref(w)),
+                            // pages visited often rank a little higher
+                            score: s + (v.visits.clamp(0, 10) as u32),
+                        });
+                    }
+                }
+                found.sort_by_key(|r| std::cmp::Reverse(r.score));
+                found.truncate(MAX_RESULTS);
+                results.extend(found);
+            }
             for t in tabs {
                 let title = if t.title.trim().is_empty() {
                     t.url.clone()
@@ -270,6 +341,29 @@ impl Backend {
             close.effects.extend(o.effects);
             close.effects.push(Effect::FocusPage);
             Ok(close)
+        } else if let Some((kind, rest)) = result_id
+            .strip_prefix("bm/")
+            .map(|r| ("bm", r))
+            .or_else(|| result_id.strip_prefix("hist/").map(|r| ("hist", r)))
+        {
+            // the address comes from the database of that workspace, never from the page that sent the id
+            let (ws, n) = rest.split_once('/').ok_or("that result is not valid")?;
+            let ws = Id::parse(ws).map_err(|_| "that result is not valid")?;
+            let n: i64 = n.parse().map_err(|_| "that result is not valid")?;
+            let url = self
+                .with_db(&ws, |c| {
+                    Ok(if kind == "bm" {
+                        bookmark::get(c, n)?.map(|b| b.url)
+                    } else {
+                        history::get(c, n)?.map(|v| v.url)
+                    })
+                })?
+                .ok_or("that page is no longer saved")?;
+            // opened as a new tab in that workspace, so it loads with that workspace's own login (S10)
+            let o = self.run(Action::OpenIn { workspace: ws, url }, Source::Shell)?;
+            close.replies.extend(o.replies);
+            close.effects.extend(o.effects);
+            Ok(close)
         } else if let Some(cmd) = result_id.strip_prefix("cmd/") {
             let cmd = commands::find(cmd)
                 .filter(|c| c.id != CMD_OPEN)
@@ -285,7 +379,10 @@ impl Backend {
 
     /// Validate a result id against the scope, then close the launcher (which resets the scope). Returns the close outcome.
     fn launcher_close_after(&mut self, result_id: &str) -> Result<Outcome, Failure> {
-        if let Some(rest) = result_id.strip_prefix("tab/") {
+        if let Some(rest) = ["tab/", "bm/", "hist/"]
+            .iter()
+            .find_map(|p| result_id.strip_prefix(p))
+        {
             let ws = rest.split_once('/').map(|(w, _)| w).unwrap_or("");
             let ws = Id::parse(ws).map_err(|_| "that result is not valid")?;
             if !self.scope_ids().contains(&ws) {

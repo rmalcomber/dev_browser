@@ -23,6 +23,8 @@ Source: `planning/home-screen-browser-spec.md` sections 3.2, 8 and 10, and the M
 
 **M2.1 status: done 2026-11-13** (see the M2.1 entry in `docs/ai/decisions.md`). `tools\m21-launcher.ps1` passes on the real window; S2, S3, S4 pass as Rust tests, S1 for tabs and commands.
 
+**M2.2 status: done 2026-11-13** (see the M2.2 entry in `docs/ai/decisions.md`). `tools\m22-places.ps1` passes on the real window; S1 is complete.
+
 ## Not in M2
 
 Tools and widgets (M3), split-view scope rules (M4: the contextual scope is one workspace until there are two panes), rebinding shortcuts.

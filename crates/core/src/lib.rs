@@ -3,11 +3,13 @@
 
 pub mod address;
 pub mod backend;
+pub mod bookmark;
 pub mod commands;
 pub mod data;
 pub mod downloads;
 pub mod errorpage;
 pub mod group;
+pub mod history;
 pub mod id;
 pub mod ipc;
 pub mod migrate;

@@ -82,3 +82,4 @@ input { font: inherit; color: #eee; background: #252526; border: 1px solid #4a4a
 .lscopes { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-top: 1px solid #333; }
 .lscopes button[aria-pressed="true"] { background: #094771; border-color: #4da3ff; color: #fff; }
 .lws { display: inline-flex; align-items: center; gap: 5px; }
+.lkind { flex: none; color: #c9a227; font-size: 12px; }

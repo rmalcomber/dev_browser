@@ -11,7 +11,7 @@ export interface WorkspaceRef {
 export interface Result {
   /** Opaque: only the app can say what it means. */
   id: string;
-  kind: 'tab' | 'command';
+  kind: 'tab' | 'command' | 'bookmark' | 'history';
   title: string;
   subtitle: string;
   workspace: WorkspaceRef | null;
@@ -40,7 +40,7 @@ const isResult = (v: unknown): v is Result => {
   return (
     !!r &&
     typeof r.id === 'string' &&
-    (r.kind === 'tab' || r.kind === 'command') &&
+    ['tab', 'command', 'bookmark', 'history'].includes(r.kind) &&
     typeof r.title === 'string' &&
     typeof r.subtitle === 'string' &&
     (r.workspace === null || isRef(r.workspace)) &&

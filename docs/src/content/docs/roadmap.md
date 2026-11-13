@@ -11,7 +11,7 @@ An honest, short list of what is next. Move items to a release page when they sh
 |---|---|---|
 | M0 | Feasibility spike: Chromium under Rust, overlay, `Ctrl+P` interception, two isolated sessions, two panes | Done on Windows: direct CEF through cef-rs |
 | M1 | Workspaces, per-workspace databases and sessions, sidebar, address bar, tabs, safety nets, restore | Built (unreleased alpha); the hand test on real accounts is still open |
-| M2 | Launcher: scoped search, bookmarks, `Ctrl+D`, explicit wider search | In progress: `Ctrl+P` and scoped search of tabs and commands work; history and bookmarks are next |
+| M2 | Launcher: scoped search, bookmarks, `Ctrl+D`, explicit wider search | In progress: `Ctrl+P`, scoped search of tabs, commands, bookmarks and history, and `Ctrl+D` work; Home Screen entries are next |
 | M3 | Restricted tools, capability broker, right-hand widget panel | Planned |
 | M4 | Split view, downloads and permissions, packaging, security updates, hardening | Planned |
 
@@ -22,13 +22,13 @@ Built in M1, on Windows, not yet released:
 - Workspaces you can create, rename, recolour and delete, each with its own login session and data, and an accent colour drawn around its pages.
 - A sidebar tree of workspaces, tab groups and tabs; collapsed workspaces show only a name and an icon.
 - Tabs, back, forward, reload, stop, an address bar that also searches, and page icons.
-- A `Ctrl+P` launcher that searches the open tabs and every command in the workspace you are in, with an explicit, temporary option to search wider.
+- A `Ctrl+P` launcher that searches the open tabs, bookmarks, history and every command in the workspace you are in, with an explicit, temporary option to search wider. `Ctrl+D` bookmarks a page; history can be cleared.
 - Everything has a keyboard shortcut; see [shortcuts](/dev_browser/reference/shortcuts/).
 - Opening a page in another workspace uses that workspace's own session, never the one you came from.
 - The browser's own error pages for failed loads, certificate errors (never bypassed) and crashed pages; popups only when you asked for them; downloads that wait for your answer.
 - Tabs, groups, the selected tab, the window size and each workspace's login come back after a restart, including after the app is killed.
 
-Not yet: history and bookmark search, tools, widget panel, split view, bookmarks, history, real permission prompts, an installer and the first tagged release. Pages that ask for the camera, the microphone, your location or notifications are denied for now, with a notice in the sidebar.
+Not yet: Home Screen entries, bookmark folders, a history page, tools, widget panel, split view, bookmarks, history, real permission prompts, an installer and the first tagged release. Pages that ask for the camera, the microphone, your location or notifications are denied for now, with a notice in the sidebar.
 
 ## After v1 (not committed)
 

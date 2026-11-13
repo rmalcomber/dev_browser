@@ -188,6 +188,12 @@ pub const COMMANDS: &[Command] = &[
     cmd!("nav.address", "Go to the address bar", ["ctrl+l"]),
     cmd!("launcher.open", "Open the launcher", ["ctrl+p"]),
     cmd!(
+        "bookmark.toggle",
+        "Bookmark this page (or remove its bookmark)",
+        ["ctrl+d"]
+    ),
+    cmd!("history.clear", "Clear this workspace's history", []),
+    cmd!(
         "download.save",
         "Save the download that is waiting",
         ["ctrl+shift+s"]
@@ -335,8 +341,8 @@ mod tests {
 
     #[test]
     fn spec_reserved_chords_stay_free() {
-        // Ctrl+D (bookmark, M2.2), Ctrl+\ (split), Ctrl+1/Ctrl+2 (pane focus, M4), Ctrl+Shift+P (print)
-        for text in ["ctrl+d", "ctrl+1", "ctrl+2", "ctrl+shift+p"] {
+        // (Ctrl+D is the bookmark, since M2.2), Ctrl+\ (split), Ctrl+1/Ctrl+2 (pane focus, M4), Ctrl+Shift+P (print)
+        for text in ["ctrl+1", "ctrl+2", "ctrl+shift+p"] {
             let chord = Chord::parse(text).unwrap();
             assert!(
                 table().iter().all(|(c, _)| *c != chord),

@@ -95,6 +95,15 @@ describe('the launcher page', () => {
     expect(sent()).toContainEqual(['launcher.scope', JSON.stringify({ kind: 'selected', workspaces: ['ws-b'] })]);
   });
 
+  it('marks bookmarks and history, and accepts only known kinds', async () => {
+    handleMessage('launcher.results', payload([res('bm/ws-a/1', 'Saved', WS[0], 'bookmark'), res('hist/ws-a/2', 'Seen', WS[0], 'history')]));
+    render(<Launcher />, root);
+    await tick();
+    expect(Array.from(root.querySelectorAll('.lkind')).map((k) => k.getAttribute('title'))).toEqual(['bookmark', 'history']);
+    handleMessage('launcher.results', payload([res('x/1', 'Odd', WS[0], 'download')]));
+    expect(results.value.length).toBe(2);
+  });
+
   it('starts afresh when the app opens it', () => {
     query.value = 'old';
     selected.value = 3;

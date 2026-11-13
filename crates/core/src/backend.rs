@@ -23,12 +23,14 @@ use crate::group;
 use crate::id::Id;
 use crate::ipc::{Refused, Reply, MAX_PAYLOAD_BYTES};
 use crate::tab::{self, Tab};
+use crate::{bookmark, history};
 use crate::{settings, url, workspace};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 mod launcher;
+mod places;
 use launcher::{DragIn, LauncherState, ScopeIn, SearchIn};
 pub use launcher::{
     ScopeRequest, LAUNCHER_CLOSE, LAUNCHER_DRAG, LAUNCHER_OPEN, LAUNCHER_RUN, LAUNCHER_SCOPE,
@@ -657,6 +659,12 @@ impl Backend {
     pub fn tab_title(&mut self, ws: &Id, tab_id: &Id, title: &str) -> Option<Reply> {
         let id = tab_id.clone();
         self.with_db(ws, |c| tab::set_title(c, &id, title)).ok()?;
+        // the page's title belongs to its history row too (the row exists once its address was seen)
+        let id = tab_id.clone();
+        let _ = self.with_db(ws, |c| {
+            let t = tab::get(c, &id)?;
+            Ok(history::set_title(c, &t.url, title)?)
+        });
         self.expanded.contains(ws).then(|| self.tabs_reply())
     }
 
@@ -666,6 +674,10 @@ impl Backend {
         let stored = self
             .with_db(ws, |c| tab::set_url(c, &id, new_url))
             .unwrap_or(false);
+        if stored {
+            // a visit; the title arrives later and is added by `tab_title`
+            let _ = self.with_db(ws, |c| Ok(history::record(c, new_url, "")?));
+        }
         (stored && self.expanded.contains(ws)).then(|| self.tabs_reply())
     }
 
@@ -1278,6 +1290,8 @@ impl Backend {
             "nav.stop" => Ok(Self::just(Effect::Stop)),
             "nav.address" => Ok(Self::just(Effect::FocusAddress)),
             "launcher.open" => Ok(self.launcher_open()),
+            "bookmark.toggle" => self.bookmark_toggle(),
+            "history.clear" => self.history_clear(),
             "download.save" | "download.cancel" => {
                 let save = id == "download.save";
                 // the oldest waiting offer (the lowest id); nothing waiting is not an error
@@ -3171,5 +3185,270 @@ b{}",
         assert_eq!(b.launcher_pos(), None);
         b.set_launcher_pos(120, -30);
         assert_eq!(b.launcher_pos(), Some((120, -30)));
+    }
+
+    // ---- history and bookmarks (M2.2) ----
+
+    /// Make the tab show `url` with `title`, as the host does when a page navigates.
+    fn visit(b: &mut Backend, ws: &Id, url: &str, title: &str) {
+        let t = b.with_db(ws, tab::list).unwrap().remove(0);
+        b.tab_url(ws, &t.id, url);
+        b.tab_title(ws, &t.id, title);
+    }
+
+    fn kinds(v: &Value) -> Vec<String> {
+        v["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["kind"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn visits_are_recorded_with_their_titles_and_without_fragments() {
+        let (_t, mut b, work, _personal) = work_and_personal("h-visit");
+        visit(
+            &mut b,
+            &work,
+            "https://docs.example/guide#token=abc",
+            "The guide",
+        );
+        visit(&mut b, &work, "about:blank", "");
+        let all = b.with_db(&work, |c| Ok(history::all(c)?)).unwrap();
+        let urls: Vec<&str> = all.iter().map(|v| v.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            vec!["https://docs.example/guide"],
+            "no fragment, and the blank page is not a visit"
+        );
+        assert_eq!(all[0].title, "The guide");
+        assert!(
+            !serde_json::to_string(&all.iter().map(|v| v.url.clone()).collect::<Vec<_>>())
+                .unwrap()
+                .contains("token")
+        );
+    }
+
+    #[test]
+    fn history_and_bookmarks_are_found_by_search_but_history_is_never_listed() {
+        let (_t, mut b, work, _personal) = work_and_personal("h-find");
+        visit(
+            &mut b,
+            &work,
+            "https://docs.example/guide",
+            "Zebra handbook",
+        );
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        let empty = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": ""})));
+        assert!(
+            !kinds(&empty).contains(&"history".to_string()),
+            "an empty query lists no history (S3)"
+        );
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "zebra"})));
+        assert!(
+            kinds(&r).contains(&"history".to_string()) || kinds(&r).contains(&"tab".to_string())
+        );
+        // bookmark it: it shows as a bookmark, listed even for an empty query, and the history row is not listed twice
+        b.run_command("bookmark.toggle", Source::Page);
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "zebra"})));
+        assert_eq!(kinds(&r).iter().filter(|k| *k == "bookmark").count(), 1);
+        assert_eq!(
+            kinds(&r).iter().filter(|k| *k == "history").count(),
+            0,
+            "not twice"
+        );
+        let empty = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": ""})));
+        assert!(kinds(&empty).contains(&"bookmark".to_string()));
+    }
+
+    #[test]
+    fn s1_a_work_scoped_search_never_returns_personal_history_or_bookmarks() {
+        let (_t, mut b, work, personal) = work_and_personal("h-s1");
+        // Personal has a history row and a bookmark; Work is active
+        let p = b.with_db(&personal, tab::list).unwrap().remove(0);
+        b.tab_url(&personal, &p.id, "https://private.example/divorce-lawyer");
+        b.tab_title(&personal, &p.id, "Divorce lawyer consultation");
+        b.with_db(&personal, |c| {
+            bookmark::toggle(
+                c,
+                "https://private.example/divorce-lawyer",
+                "Divorce lawyer consultation",
+            )
+            .map_err(tab::TabError::Message)
+        })
+        .unwrap();
+        visit(
+            &mut b,
+            &work,
+            "https://work.example/report",
+            "Quarterly report",
+        );
+        send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        let o = send(&mut b, LAUNCHER_OPEN, json!({}));
+        let mut replies = vec![serde_json::to_string(&results(&o)).unwrap()];
+        for query in [
+            "", "divorce", "lawyer", "private", "example", "d", "consult",
+        ] {
+            let o = send(&mut b, LAUNCHER_SEARCH, json!({"query": query}));
+            replies.push(serde_json::to_string(&results(&o)).unwrap());
+        }
+        // running a Personal history or bookmark id from here is refused, and says nothing about what is there
+        let hist = b
+            .with_db(&personal, |c| Ok(history::all(c)?))
+            .unwrap()
+            .remove(0);
+        let bm = b
+            .with_db(&personal, |c| Ok(bookmark::all(c)?))
+            .unwrap()
+            .remove(0);
+        for id in [
+            format!("hist/{}/{}", personal, hist.id),
+            format!("bm/{}/{}", personal, bm.id),
+        ] {
+            let o = send(&mut b, LAUNCHER_RUN, json!({"id": id}));
+            assert_eq!(first_reply(&o).0, "error");
+            assert!(o.effects.is_empty());
+            replies.push(
+                o.replies
+                    .iter()
+                    .map(|r| r.payload.clone())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+        }
+        for text in &replies {
+            assert!(
+                !text.contains("ivorce")
+                    && !text.contains("lawyer")
+                    && !text.contains("private.example"),
+                "Personal data leaked: {text}"
+            );
+        }
+        // the Work page is there to be found, so the check is not vacuous
+        let r = results(&send(
+            &mut b,
+            LAUNCHER_SEARCH,
+            json!({"query": "quarterly"}),
+        ));
+        assert!(titles(&r).contains(&"Quarterly report".to_string()));
+        // and with the scope widened on purpose, Personal's are found
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": "divorce"})));
+        assert!(kinds(&r).contains(&"bookmark".to_string()));
+    }
+
+    #[test]
+    fn a_history_or_bookmark_result_opens_a_new_tab_in_its_own_workspace_from_the_stored_address() {
+        let (_t, mut b, _work, personal) = work_and_personal("h-run");
+        let p = b.with_db(&personal, tab::list).unwrap().remove(0);
+        b.tab_url(&personal, &p.id, "https://private.example/page#frag");
+        b.tab_title(&personal, &p.id, "Private page");
+        // the tab moves on, so the page is only in history, not open
+        b.tab_url(&personal, &p.id, "https://private.example/elsewhere");
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        let r = results(&send(
+            &mut b,
+            LAUNCHER_SEARCH,
+            json!({"query": "private page"}),
+        ));
+        let hist = r["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["kind"] == "history")
+            .expect("a history result")
+            .clone();
+        let tabs_before = b.with_db(&personal, tab::list).unwrap().len();
+        let o = send(&mut b, LAUNCHER_RUN, json!({"id": hist["id"]}));
+        assert_eq!(
+            b.active(),
+            &personal,
+            "it opens in the workspace the page belongs to"
+        );
+        let now = b.with_db(&personal, tab::list).unwrap();
+        assert_eq!(now.len(), tabs_before + 1);
+        assert!(now.iter().any(|t| t.url == "https://private.example/page"));
+        assert!(o
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::Show { workspace, .. } if workspace == &personal)));
+        assert!(o.effects.contains(&Effect::HideLauncher));
+        // an id that does not exist, or is malformed, is a plain error
+        send(&mut b, LAUNCHER_SCOPE, json!({"kind": "all"}));
+        for bad in [
+            format!("hist/{}/99999", personal),
+            format!("bm/{}/1", personal),
+            format!("hist/{}/x", personal),
+            "hist/".to_string(),
+            "bm/zzz/1".to_string(),
+        ] {
+            let o = send(&mut b, LAUNCHER_RUN, json!({"id": bad}));
+            assert_eq!(first_reply(&o).0, "error", "{bad}");
+        }
+    }
+
+    #[test]
+    fn ctrl_d_bookmarks_the_shown_page_in_its_workspace_and_again_removes_it() {
+        let (_t, mut b, work, personal) = work_and_personal("h-ctrl-d");
+        visit(
+            &mut b,
+            &work,
+            "https://work.example/report",
+            "Quarterly report",
+        );
+        let o = b.run_command("bookmark.toggle", Source::Page);
+        assert_eq!(o.replies[0].name, "notice");
+        assert!(o.replies[0].payload.contains("Bookmarked"));
+        assert_eq!(
+            b.with_db(&work, |c| Ok(bookmark::all(c)?)).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            b.with_db(&personal, |c| Ok(bookmark::all(c)?))
+                .unwrap()
+                .len(),
+            0,
+            "only the page's own workspace"
+        );
+        let o = b.run_command("bookmark.toggle", Source::Page);
+        assert!(o.replies[0].payload.contains("removed"));
+        assert!(b
+            .with_db(&work, |c| Ok(bookmark::all(c)?))
+            .unwrap()
+            .is_empty());
+        // a page that cannot be bookmarked is an error, not a silent no-op
+        visit(&mut b, &work, "about:blank", "");
+        let t = b.with_db(&work, tab::list).unwrap().remove(0);
+        b.with_db(&work, |c| tab::set_url(c, &t.id, "about:blank"))
+            .unwrap();
+        let o = b.run_command("bookmark.toggle", Source::Page);
+        assert_eq!(o.replies[0].name, "error");
+    }
+
+    #[test]
+    fn clearing_history_clears_the_active_workspace_only_and_keeps_bookmarks() {
+        let (_t, mut b, work, personal) = work_and_personal("h-clear");
+        visit(&mut b, &work, "https://work.example/a", "A");
+        b.run_command("bookmark.toggle", Source::Page);
+        let p = b.with_db(&personal, tab::list).unwrap().remove(0);
+        b.tab_url(&personal, &p.id, "https://private.example/b");
+        let o = b.run_command("history.clear", Source::Shell);
+        assert_eq!(o.replies[0].name, "notice");
+        assert!(b
+            .with_db(&work, |c| Ok(history::all(c)?))
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            b.with_db(&work, |c| Ok(bookmark::all(c)?)).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            b.with_db(&personal, |c| Ok(history::all(c)?))
+                .unwrap()
+                .len(),
+            1,
+            "another workspace is untouched"
+        );
     }
 }

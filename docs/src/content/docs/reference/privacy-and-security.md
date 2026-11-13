@@ -25,6 +25,7 @@ These are rules the implementation must meet. Each has a matching acceptance tes
 - **Popups** open only when you caused them (a click) and only as a tab in the same workspace; others are blocked and you are told.
 - **Dialogs and permission requests** (alert, confirm, geolocation, notifications, camera) are dismissed or denied for now, with a notice in the sidebar. Real prompts come later.
 - **Downloads** wait for your answer (Save or Cancel). They go to your Downloads folder under a safe file name and never overwrite an existing file.
+- **History** drops the `#fragment` of every address, so a token in one is never written down. History and bookmarks live in the workspace's own database; the launcher opens only the databases of the workspaces it is allowed to search, and a wider search is temporary.
 - **A crashed page** shows an error page in its own tab; the other tabs are not affected.
 
 ## Trust tiers

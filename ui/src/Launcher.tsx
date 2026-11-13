@@ -123,6 +123,11 @@ export function Launcher() {
               </span>
             )}
             <span class="ltitle">{r.title}</span>
+            {(r.kind === "bookmark" || r.kind === "history") && (
+              <span class="lkind" title={r.kind}>
+                {r.kind === "bookmark" ? "★" : "↺"}
+              </span>
+            )}
             <span class="lsub">{r.subtitle}</span>
           </li>
         ))}

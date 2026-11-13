@@ -34,6 +34,8 @@ pub enum TabError {
     NoSuchGroup(Id),
     /// A group name that is empty, too long or has control characters.
     InvalidName(&'static str),
+    /// A message for the user from another module that runs inside a workspace database call (a bookmark that cannot be made).
+    Message(String),
     Sqlite(rusqlite::Error),
 }
 
@@ -45,6 +47,7 @@ impl fmt::Display for TabError {
             TabError::BadPosition => write!(f, "that position is outside the tab list"),
             TabError::NoSuchGroup(_) => write!(f, "there is no such group"),
             TabError::InvalidName(why) => write!(f, "invalid group name: {why}"),
+            TabError::Message(m) => write!(f, "{m}"),
             TabError::Sqlite(e) => write!(f, "sqlite error: {e}"),
         }
     }

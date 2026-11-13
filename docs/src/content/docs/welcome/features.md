@@ -21,11 +21,11 @@ name and an accent colour, drawn around the page it shows.
 - Tabs can be grouped inside a workspace, reordered, and opened in another workspace. Opening a page in another workspace loads it with that workspace's own login; cookies and credentials are never carried across.
 - Workspaces, tabs, groups, the selected tab and the window size come back after a restart.
 
-## The launcher (first part works today)
+## The launcher (works today for tabs, bookmarks, history and commands)
 
-`Ctrl+P` opens a floating launcher over the page, owned by the browser and invisible to websites. It searches the **open tabs and every command**, with forgiving matching: type a few letters of a tab's title or address, or of a command such as "new tab" or "reload", and press `Enter`. `Esc` closes it and returns you to the page. Drag the title bar to move it; it remembers where you left it.
+`Ctrl+P` opens a floating launcher over the page, owned by the browser and invisible to websites. It searches the **open tabs, bookmarks, history and every command**, with forgiving matching: type a few letters of a tab's title or address, or of a command such as "new tab" or "reload", and press `Enter`. `Esc` closes it and returns you to the page. Drag the title bar to move it; it remembers where you left it.
 
-Search stays inside the workspace you are in. To look wider you choose "All workspaces" or pick workspaces yourself, the launcher says so on screen, and the wider search ends the moment the launcher closes. History, bookmarks, saved Home Screen entries and tools come next.
+Search stays inside the workspace you are in. To look wider you choose "All workspaces" or pick workspaces yourself, the launcher says so on screen, and the wider search ends the moment the launcher closes. Saved Home Screen entries and tools come next.
 
 The longer description follows.
 
@@ -43,9 +43,9 @@ in memory and is not saved by default. Any tool can be **pinned** to the widget 
 
 A collapsible, resizable panel on the right holds pinned tools, in sections per workspace and coloured to match.
 
-## Bookmarks (planned)
+## Bookmarks and history (work today)
 
-`Ctrl+D` bookmarks the focused page in its own workspace. There is one bookmark store per workspace, and the launcher reads it, so there are never two bookmark systems to keep in step. Bookmarks stay in their workspace and appear in a wider search only when you ask for that workspace or split view puts it in scope.
+`Ctrl+D` bookmarks the shown page in its own workspace, and again removes the bookmark. There is one bookmark store per workspace, and the launcher reads it, so there are never two bookmark systems to keep in step. History is kept per workspace too: one entry per page with how often and when you last visited it, never the `#fragment` of an address (which can carry a token). The launcher finds both, but never lists history without a search, and "Clear this workspace's history" is one command away. Bookmarks and history stay in their workspace and appear in a wider search only when you ask for that workspace. Choosing one opens it in a new tab of the workspace it belongs to, with that workspace's own login.
 
 ## Split view (planned)
 

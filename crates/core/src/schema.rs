@@ -24,7 +24,8 @@ pub const GLOBAL: &[Migration] = &[Migration {
     ",
 }];
 
-pub const WORKSPACE: &[Migration] = &[Migration {
+pub const WORKSPACE: &[Migration] = &[
+    Migration {
     version: 1,
     name: "tab groups, tabs and workspace state",
     sql: "
@@ -49,7 +50,28 @@ pub const WORKSPACE: &[Migration] = &[Migration {
             value TEXT NOT NULL
         );
     ",
-}];
+    },
+    Migration {
+        version: 2,
+        name: "history and bookmarks",
+        sql: "
+        CREATE TABLE history (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            url        TEXT NOT NULL UNIQUE,         -- a web page without its #fragment
+            title      TEXT NOT NULL DEFAULT '',
+            visits     INTEGER NOT NULL DEFAULT 1,
+            last_visit INTEGER NOT NULL
+        );
+        CREATE INDEX history_last_visit ON history (last_visit);
+        CREATE TABLE bookmarks (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            url        TEXT NOT NULL UNIQUE,
+            title      TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL
+        );
+    ",
+    },
+];
 
 #[cfg(test)]
 mod tests {
@@ -82,6 +104,26 @@ mod tests {
                 !cols.iter().any(|c| c.contains(forbidden)),
                 "the global database must not hold {forbidden}: {cols:?}"
             );
+        }
+    }
+
+    #[test]
+    fn an_existing_workspace_database_gains_history_and_bookmarks() {
+        let mut c = Connection::open_in_memory().unwrap();
+        let r = migrate(&mut c, &WORKSPACE[..1]).unwrap();
+        assert_eq!(r.to, 1);
+        c.execute("INSERT INTO tabs (id, url, title, position, created_at) VALUES ('tab-0000000000000001', 'https://a.example/', 'A', 0, 0)", []).unwrap();
+        let r = migrate(&mut c, WORKSPACE).unwrap();
+        assert_eq!(r.to as usize, WORKSPACE.len());
+        let tabs: i64 = c
+            .query_row("SELECT COUNT(*) FROM tabs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tabs, 1, "existing data is kept");
+        for table in ["history", "bookmarks"] {
+            let n: i64 = c
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 0);
         }
     }
 }
