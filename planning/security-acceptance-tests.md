@@ -12,10 +12,10 @@ any release. None can be written until the code exists; the point now is that th
 | S5 | Tool code cannot read browser databases or Chromium session files through the exposed runtime. | M3 | Automated | Planned |
 | S6 | A visited webpage cannot invoke privileged browser IPC or reach launcher internals. | M1 | Automated + manual | First check passing (2026-11-13): `toolss6-hostile-page.ps1` |
 | S7 | `page.selection.read` binds to the focused pane and never collects from both panes. | M3/M4 | Automated | Planned |
-| S8 | Switching workspace or pane never flashes previously visible content. | M1/M4 | Manual, screen capture | Spike: no old-workspace frame after a switch, for existing, freshly created and destroyed-and-recreated views at 60 fps (white flash fixed with a dark background); real tabs still to test |
+| S8 | Switching workspace or pane never flashes previously visible content. | M1/M4 | Manual, screen capture | **M1 passing** (2026-11-13): `tools\s8-switch.ps1`, workspace switches and tab creation/closing recorded at 60 fps, frames in order, none of the previous one; shown to fail when the old view is not hidden. Split-view panes: M4 |
 | S9 | Token inputs (JWTs etc.) are not logged or persisted by default. | M3 | Automated (log and DB scan) | Planned |
 | S10 | Opening a tab across workspaces uses the destination context, never the source credentials. | M1 | Automated | Planned |
-| S11 | Collapsed workspace headers expose only name and icon: no counts, titles, URLs, thumbnails or activity. | M1 | Automated (UI test) | Planned |
+| S11 | Collapsed workspace headers expose only name and icon: no counts, titles, URLs, thumbnails or activity. | M1 | Automated (UI test) | **Passing** (2026-11-13): `ui/src/Sidebar.test.tsx` and, at the source, `backend::tests::a_collapsed_workspaces_tabs_never_appear_in_the_reply` |
 | S12 | TLS errors are never silently bypassed. | M4 | Manual | Planned |
 | S13 | OS file permission and process-model limits are documented honestly in the docs. | M4 | Docs review | Planned |
 

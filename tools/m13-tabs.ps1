@@ -193,5 +193,6 @@ finally {
   if ($srv) { Stop-Process -Id $srv.Proc.Id -Force -ErrorAction SilentlyContinue }
   if ($dir -and (Test-Path $dir)) { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
 }
+if ((Get-FocusRestores) -gt 0) { Write-Host "note: the app window lost the foreground $(Get-FocusRestores) time(s) during the run and was brought back; something else on the desktop took focus" -ForegroundColor Yellow }
 if ($failures.Count -gt 0) { Write-Host "M1.3 tabs check: $($failures.Count) failure(s)" -ForegroundColor Red; exit 1 }
 Write-Host 'M1.3 tabs check: all passed' -ForegroundColor Green

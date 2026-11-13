@@ -160,6 +160,17 @@ pub const COMMANDS: &[Command] = &[
     cmd!("tab.move.down", "Move tab down", ["ctrl+shift+pagedown"]),
     cmd!("tab.move.up", "Move tab up", ["ctrl+shift+pageup"]),
     cmd!("tab.discard", "Unload background tabs", ["ctrl+shift+d"]),
+    cmd!(
+        "tab.group.new",
+        "Put the tab in a new group",
+        ["ctrl+shift+g"]
+    ),
+    cmd!(
+        "tab.ungroup",
+        "Take the tab out of its group",
+        ["ctrl+shift+u"]
+    ),
+    cmd!("workspace.new", "New workspace", ["alt+n"]),
     cmd!("workspace.next", "Next workspace", ["alt+pagedown"]),
     cmd!("workspace.prev", "Previous workspace", ["alt+pageup"]),
     cmd!(

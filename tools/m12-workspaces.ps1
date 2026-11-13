@@ -4,7 +4,8 @@
 #           Switching back works. The second workspace is deleted through the UI: its profile folder and database folder must be gone.
 #   Phase 2 (restart on the same data): the first workspace must still have its own token (profiles persist), and the deleted workspace
 #           must not come back.
-# The sidebar's layout is fixed (ui/src/style.css), so the clicks use fixed client positions; if the layout changes, update them here.
+# The workspace is made and switched with the keyboard commands (Alt+N, Alt+PageDown); the delete buttons live in the sidebar's footer, which is
+# pinned to the bottom edge (ui/src/style.css), so they are clicked at fixed distances from the bottom of the window. If the footer changes, update them.
 # Takes over the mouse and keyboard for about a minute. Needs a build (tools\build.ps1 build) and node. Exit code 0 = pass.
 param([int]$Wait = 30)
 . "$PSScriptRoot\lib\app.ps1"
@@ -44,8 +45,8 @@ try {
   $first = $t[0]
   if ($first.Cookie -eq 'none' -and $first.Local -eq 'none') { Pass "first workspace is new to the site (token $($first.Now))" } else { Fail 'the first workspace already had a token on a fresh data folder' }
 
-  # make a second workspace through the sidebar: "+ New workspace", type a name, Enter
-  Click-Client $app 110 92; Start-Sleep -Milliseconds 500
+  # make a second workspace: Alt+N opens the name field in the sidebar, type a name, Enter
+  Send-Keys 'alt+n'; Start-Sleep -Milliseconds 800
   Send-Text 'Second'; Send-Keys 'enter'
   $t = @(Wait-Tokens $app 2 $Wait)
   if ($t.Count -lt 2) { Fail 'the second workspace never loaded the site' }
@@ -59,13 +60,14 @@ try {
 
   # switch back to the first workspace (click it) and make sure the app showed it again
   $shownBefore = Count-Log $app 'tab tab-\S+: shown \(workspace ws-'
-  Click-Client $app 60 53; Start-Sleep -Milliseconds 1200
+  Send-Keys 'alt+pagedown'; Start-Sleep -Milliseconds 1200   # next workspace: wraps from the second back to the first
   if ((Count-Log $app 'tab tab-\S+: shown \(workspace ws-') -gt $shownBefore) { Pass 'clicking the first workspace switched back to it' } else { Fail 'clicking the first workspace did nothing' }
-  Click-Client $app 60 86; Start-Sleep -Milliseconds 1200   # and to the second, which is the one to delete
+  Send-Keys 'alt+pagedown'; Start-Sleep -Milliseconds 1200   # and on to the second, which is the one to delete
 
   # delete the second (active) workspace through the UI: Delete, then confirm
-  Click-Client $app 170 173; Start-Sleep -Milliseconds 600
-  Click-Client $app 37 236
+  $c = Get-Client $app
+  Click-Client $app 170 ($c.H - 23); Start-Sleep -Milliseconds 600   # Delete in the footer
+  Click-Client $app 37 ($c.H - 23)                                   # Delete in the confirmation
   if (Wait-Log $app 'workspace ws-\S+: deleting' 10) { Pass 'the app started deleting the workspace' } else { Fail 'no delete reached the app' }
   $removed = Wait-Log $app 'workspace ws-\S+: data removed' $Wait
   if ($removed) { Pass 'the deleted workspace''s data was removed while the app was running' } else { Write-Host 'note: data was not removable while running (Chromium holds the profile open); it is removed when the app exits' -ForegroundColor Yellow }

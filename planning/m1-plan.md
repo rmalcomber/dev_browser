@@ -117,6 +117,12 @@ frame around the page; restore-last-tab per workspace; switching hides the old w
 content (S8). The spike's frame-capture analyser becomes the S8 regression check.
 **Done when:** the S11 and S8 checks pass; switching between workspaces shows no frame of the previous one at 60 fps.
 
+**Status: done 2026-11-13** (see the M1.4 entry in `docs/ai/decisions.md`). S11: collapsed workspaces are only a name and an icon, enforced at the
+source (core sends tab data for expanded workspaces only) and in the UI (`Sidebar.test.tsx`). S8: `tools\s8-switch.ps1`, 9 switches at 60 fps
+with no out-of-order frame, shown to fail when the old view is not hidden. Also done: the chevron and name behaviour, groups with one visual
+order, the workspace accent frame (recolours live), and `tools\m14-sidebar.ps1` on the real window. Not done: drag and drop, persisted
+expansion, per-group colours.
+
 ### M1.5 Navigation chrome (M)
 Address bar and search-or-URL entry, back, forward, reload, stop, loading state, title and favicon, per tab, over IPC. Cross-workspace
 open uses the destination's context, never the source's credentials (S10).

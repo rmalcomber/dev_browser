@@ -21,11 +21,17 @@ pub fn execute(effect: Effect) {
             workspace,
             tab,
             url,
-        } => show(&workspace, &tab, &url),
+            colour,
+        } => {
+            set_accent(&workspace, colour);
+            show(&workspace, &tab, &url);
+        }
+        Effect::SetAccent { workspace, colour } => set_accent(&workspace, colour),
         Effect::DestroyView { tab, .. } => destroy_view(&tab),
         Effect::DeleteWorkspace(ws) => delete_workspace(&ws),
         Effect::FocusPage => focus_page(),
-        Effect::FocusShell => focus_shell(),
+        Effect::FocusShell => focus_shell("sidebar"),
+        Effect::NewWorkspaceForm => focus_shell("new-workspace"),
     }
 }
 
@@ -36,6 +42,21 @@ pub fn deliver(outcome: Outcome) {
     }
     for reply in outcome.replies {
         ipc::push_to_shell(reply.name, &reply.payload);
+    }
+}
+
+/// Remember a workspace's accent colour and redraw the frame of its existing views.
+fn set_accent(ws: &Id, colour: u32) {
+    let wrappers: Vec<Panel> = state::with(|s| {
+        s.accents.insert(ws.clone(), colour);
+        s.tabs
+            .values()
+            .filter(|t| &t.workspace == ws)
+            .map(|t| t.wrapper.clone())
+            .collect()
+    });
+    for w in wrappers {
+        w.set_background_color(layout::argb(colour));
     }
 }
 
@@ -121,16 +142,17 @@ fn create_view(ws: &Id, tab: &Id, url: &str) {
         eprintln!("[host] tab {tab}: could not create its view");
         return;
     };
-    // The view lives in a wrapper panel, which is what the window shows, hides and detaches. The wrapper goes into the window first so the
-    // browser view's native window is created inside it. Hidden until apply_visibility says it is the shown one.
+    // The view lives in a wrapper panel, which is what the window shows, hides and detaches. Order matters, as in M0: colour and layout
+    // first, then the wrapper goes into the window, then the browser view into the wrapper (so its native window is created inside it).
     let mut wd = layout::WrapEvents::new();
     let Some(wrapper) = panel_create(Some(&mut wd)) else {
         eprintln!("[host] tab {tab}: could not create its wrapper");
         return;
     };
-    wrapper.set_visible(0);
-    let mut wv = View::from(&wrapper);
-    panel.add_child_view(Some(&mut wv));
+    // the frame: the wrapper's own colour shows in the FRAME_PX inset around the view
+    if let Some(colour) = state::with(|s| s.accents.get(ws).copied()) {
+        wrapper.set_background_color(layout::argb(colour));
+    }
     let inner = wrapper.set_to_box_layout(Some(&BoxLayoutSettings {
         horizontal: 1,
         inside_border_insets: Insets {
@@ -142,11 +164,20 @@ fn create_view(ws: &Id, tab: &Id, url: &str) {
         cross_axis_alignment: AxisAlignment::STRETCH,
         ..Default::default()
     }));
+    let mut wv = View::from(&wrapper);
+    panel.add_child_view(Some(&mut wv));
     let mut v = View::from(&view);
     wrapper.add_child_view(Some(&mut v));
     if let Some(l) = inner.as_ref() {
         l.set_flex_for_view(Some(&mut v), 0);
     }
+    // The colour is applied again now that the wrapper is in the window: set only at creation it was not painted (M0's outline code applied
+    // it to wrappers that were already in the window, every time the focus moved).
+    if let Some(colour) = state::with(|s| s.accents.get(ws).copied()) {
+        wrapper.set_background_color(layout::argb(colour));
+    }
+    // hidden until apply_visibility says it is the shown one, so a background tab never flashes on top
+    wrapper.set_visible(0);
     state::with(|s| {
         s.tabs.insert(
             tab.clone(),
@@ -197,11 +228,11 @@ fn focus_page() {
     ipc::push_to_shell("focus", r#"{"target":"page"}"#);
 }
 
-fn focus_shell() {
+fn focus_shell(target: &str) {
     if let Some(shell) = state::with(|s| s.shell.clone()) {
         shell.request_focus();
-        // the shell's page decides which control inside it takes the focus
-        ipc::push_to_shell("focus", r#"{"target":"sidebar"}"#);
+        // the shell's page decides which control inside it takes the focus (or opens the new-workspace field)
+        ipc::push_to_shell("focus", &format!(r#"{{"target":"{target}"}}"#));
     }
 }
 

@@ -1,5 +1,7 @@
 //! Tab records, in a workspace's own database. A tab is a record, not a view: its page view exists only while needed and can be
-//! destroyed and recreated from the record (planning/m1-plan.md, section 4). Positions are dense (0, 1, 2, ...) within the workspace.
+//! destroyed and recreated from the record (planning/m1-plan.md, section 4). Positions are dense (0, 1, 2, ...) within the workspace, and
+//! they are the **visual order** the sidebar shows and `Ctrl+Tab` follows: ungrouped tabs first, then each group (in group order) with its
+//! tabs together. `normalize` keeps that true after every change, so a tab can never sit inside another group's block.
 //!
 //! Titles and URLs come from pages, so they are untrusted: titles are cleaned and cut short here, and a URL is only ever stored if
 //! `url::is_restorable` says it may be loaded again.
@@ -18,6 +20,8 @@ pub struct Tab {
     pub url: String,
     pub title: String,
     pub position: u32,
+    /// The group this tab is in, if any (see `group`).
+    pub group: Option<Id>,
 }
 
 #[derive(Debug)]
@@ -26,6 +30,10 @@ pub enum TabError {
     /// The URL may not be stored (see `url::is_restorable`).
     BadUrl,
     BadPosition,
+    /// The group does not exist in this workspace.
+    NoSuchGroup(Id),
+    /// A group name that is empty, too long or has control characters.
+    InvalidName(&'static str),
     Sqlite(rusqlite::Error),
 }
 
@@ -35,6 +43,8 @@ impl fmt::Display for TabError {
             TabError::NotFound(_) => write!(f, "there is no such tab"),
             TabError::BadUrl => write!(f, "that address cannot be opened in a tab"),
             TabError::BadPosition => write!(f, "that position is outside the tab list"),
+            TabError::NoSuchGroup(_) => write!(f, "there is no such group"),
+            TabError::InvalidName(why) => write!(f, "invalid group name: {why}"),
             TabError::Sqlite(e) => write!(f, "sqlite error: {e}"),
         }
     }
@@ -74,18 +84,29 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Tab> {
         url: r.get(1)?,
         title: r.get(2)?,
         position: r.get(3)?,
+        group: match r.get::<_, Option<String>>(4)? {
+            None => None,
+            Some(g) => Some(Id::parse(&g).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    4,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?),
+        },
     })
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Tab>, TabError> {
-    let mut s = conn.prepare("SELECT id, url, title, position FROM tabs ORDER BY position")?;
+    let mut s =
+        conn.prepare("SELECT id, url, title, position, group_id FROM tabs ORDER BY position")?;
     let tabs = s.query_map([], row)?.collect::<Result<Vec<_>, _>>()?;
     Ok(tabs)
 }
 
 pub fn get(conn: &Connection, id: &Id) -> Result<Tab, TabError> {
     conn.query_row(
-        "SELECT id, url, title, position FROM tabs WHERE id = ?1",
+        "SELECT id, url, title, position, group_id FROM tabs WHERE id = ?1",
         [id.as_str()],
         row,
     )
@@ -93,10 +114,19 @@ pub fn get(conn: &Connection, id: &Id) -> Result<Tab, TabError> {
     .ok_or_else(|| TabError::NotFound(id.clone()))
 }
 
-/// Add a tab at `position` (the end if `None` or past the end), shifting the ones after it.
-pub fn create(conn: &Connection, url: &str, position: Option<u32>) -> Result<Tab, TabError> {
+/// Add a tab at `position` (the end if `None` or past the end), shifting the ones after it, in `group` if given. The position is a
+/// request: `normalize` then puts the tab where its group says it belongs.
+pub fn create(
+    conn: &Connection,
+    url: &str,
+    position: Option<u32>,
+    group: Option<&Id>,
+) -> Result<Tab, TabError> {
     if !url::is_restorable(url) {
         return Err(TabError::BadUrl);
+    }
+    if let Some(g) = group {
+        crate::group::get(conn, g)?;
     }
     let tx = conn.unchecked_transaction()?;
     let count: u32 = tx.query_row("SELECT COUNT(*) FROM tabs", [], |r| r.get(0))?;
@@ -107,16 +137,12 @@ pub fn create(conn: &Connection, url: &str, position: Option<u32>) -> Result<Tab
     )?;
     let id = Id::new("tab");
     tx.execute(
-        "INSERT INTO tabs (id, url, title, position, created_at, last_active) VALUES (?1, ?2, '', ?3, ?4, ?4)",
-        params![id.as_str(), url, position, now()],
+        "INSERT INTO tabs (id, url, title, position, created_at, last_active, group_id) VALUES (?1, ?2, '', ?3, ?4, ?4, ?5)",
+        params![id.as_str(), url, position, now(), group.map(|g| g.as_str())],
     )?;
+    normalize(&tx)?;
     tx.commit()?;
-    Ok(Tab {
-        id,
-        url: url.to_string(),
-        title: String::new(),
-        position,
-    })
+    get(conn, &id)
 }
 
 /// Remove a tab and close the gap. If it was the selected tab the selection is cleared (the caller picks the next one).
@@ -139,6 +165,8 @@ pub fn close(conn: &Connection, id: &Id) -> Result<(), TabError> {
         "DELETE FROM workspace_state WHERE key = ?1 AND value = ?2",
         params![SELECTED, id.as_str()],
     )?;
+    crate::group::prune_empty(&tx)?;
+    normalize(&tx)?;
     tx.commit()?;
     Ok(())
 }
@@ -175,7 +203,30 @@ pub fn move_to(conn: &Connection, id: &Id, position: u32) -> Result<(), TabError
             params![id.as_str(), position],
         )?;
     }
+    // a tab can only be reordered within its own block: normalize puts it back if the move crossed into another group
+    normalize(&tx)?;
     tx.commit()?;
+    Ok(())
+}
+
+/// Put the tabs in visual order: ungrouped first, then each group in group order, each group's tabs together, and renumber 0, 1, 2, ...
+/// Within a block the existing relative order is kept. Safe to call at any time; does nothing if the order is already right.
+pub(crate) fn normalize(conn: &Connection) -> Result<(), TabError> {
+    let mut s = conn.prepare(
+        "SELECT t.id, t.position FROM tabs t LEFT JOIN tab_groups g ON g.id = t.group_id \
+         ORDER BY (CASE WHEN t.group_id IS NULL THEN 0 ELSE 1 END), COALESCE(g.position, 0), t.position, t.id",
+    )?;
+    let rows: Vec<(String, u32)> = s
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    for (i, (id, position)) in rows.iter().enumerate() {
+        if *position != i as u32 {
+            conn.execute(
+                "UPDATE tabs SET position = ?2 WHERE id = ?1",
+                params![id, i as u32],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -256,9 +307,9 @@ mod tests {
 
     fn three(c: &Connection) -> (Tab, Tab, Tab) {
         (
-            create(c, "https://a.example/", None).unwrap(),
-            create(c, "https://b.example/", None).unwrap(),
-            create(c, "https://c.example/", None).unwrap(),
+            create(c, "https://a.example/", None, None).unwrap(),
+            create(c, "https://b.example/", None, None).unwrap(),
+            create(c, "https://c.example/", None, None).unwrap(),
         )
     }
 
@@ -267,7 +318,7 @@ mod tests {
         let c = db();
         let (a, b, d) = three(&c);
         assert_eq!((a.position, b.position, d.position), (0, 1, 2));
-        let mid = create(&c, "https://mid.example/", Some(1)).unwrap();
+        let mid = create(&c, "https://mid.example/", Some(1), None).unwrap();
         assert_eq!(mid.position, 1);
         assert_eq!(
             urls(&c),
@@ -282,7 +333,7 @@ mod tests {
         assert_eq!(positions, vec![0, 1, 2, 3]);
         // a position past the end means the end
         assert_eq!(
-            create(&c, "https://end.example/", Some(99))
+            create(&c, "https://end.example/", Some(99), None)
                 .unwrap()
                 .position,
             4
@@ -300,7 +351,7 @@ mod tests {
             "",
         ] {
             assert!(
-                matches!(create(&c, bad, None), Err(TabError::BadUrl)),
+                matches!(create(&c, bad, None, None), Err(TabError::BadUrl)),
                 "{bad}"
             );
         }

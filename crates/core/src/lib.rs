@@ -4,6 +4,7 @@
 pub mod backend;
 pub mod commands;
 pub mod data;
+pub mod group;
 pub mod id;
 pub mod ipc;
 pub mod migrate;

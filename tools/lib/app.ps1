@@ -15,6 +15,7 @@ public static class Win {
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
@@ -25,6 +26,20 @@ public static class Win {
 [void][Win]::SetProcessDPIAware()
 
 $script:RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+# The app window input is meant for. If something else takes the foreground mid-run (a notification, another app), keys and clicks would go
+# there instead; Send-Keys and Click-Client bring the window back first and count it, so a run can report it rather than fail mysteriously.
+$script:FocusHandle = [IntPtr]::Zero
+$script:FocusRestores = 0
+function Get-FocusRestores { $script:FocusRestores }
+function Ensure-Foreground {
+  if ($script:FocusHandle -eq [IntPtr]::Zero) { return }
+  if ([Win]::GetForegroundWindow() -ne $script:FocusHandle) {
+    $script:FocusRestores++
+    [Win]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [Win]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+    [void][Win]::SetForegroundWindow($script:FocusHandle)
+    Start-Sleep -Milliseconds 400
+  }
+}
 
 function Get-AppExe {
   $exe = Join-Path $script:RepoRoot 'target\debug\dev_browser.exe'
@@ -54,6 +69,7 @@ function Start-App([string]$Url = 'https://example.com/', [string[]]$ExtraArgs =
 
 # Bring the window to the front, topmost, so a screen capture holds only the app and input goes to it.
 function Focus-App($app) {
+  $script:FocusHandle = $app.Handle
   [void][Win]::ShowWindow($app.Handle, 9)
   # a tap on Alt lets SetForegroundWindow succeed from a background script
   [Win]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [Win]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
@@ -88,6 +104,7 @@ function Wait-Log($app, [string]$pattern, [int]$seconds = 15) {
 
 # Click at a point given in client-area pixels at 100% scale; -Scale is the window's device scale factor.
 function Click-Client($app, [double]$x, [double]$y, [double]$Scale = 1.0) {
+  Ensure-Foreground
   $c = Get-Client $app
   [void][Win]::SetCursorPos($c.X + [int]($x * $Scale), $c.Y + [int]($y * $Scale)); Start-Sleep -Milliseconds 150
   [Win]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); [Win]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
@@ -107,6 +124,7 @@ function Get-Vk([string]$name) {
 
 # Press a chord such as "ctrl+3", "ctrl+shift+p", "esc" or "f6".
 function Send-Keys([string]$chord) {
+  Ensure-Foreground
   $parts = $chord.Split('+'); $key = Get-Vk $parts[-1]
   $mods = @(); if ($parts.Count -gt 1) { $mods = $parts[0..($parts.Count - 2)] | ForEach-Object { Get-Vk $_ } }
   foreach ($m in $mods) { [Win]::keybd_event($m, 0, 0, [UIntPtr]::Zero) }
@@ -140,6 +158,29 @@ function Save-Window($app, [string]$path, [switch]$ClientOnly) {
   $bmp = New-Object System.Drawing.Bitmap $w, $h
   $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($x, $y, 0, 0, $bmp.Size); $g.Dispose()
   $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+}
+
+# Start recording the app's client area at 60 fps (needs ffmpeg). Returns the ffmpeg process and the raw file; stop with Wait-Recording.
+function Start-Recording($app, [int]$Seconds) {
+  if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { throw 'ffmpeg is not on PATH' }
+  $raw = Join-Path $env:TEMP ('devb_frames_' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.raw')
+  $c = Get-Client $app
+  $w = $c.W - ($c.W % 2); $h = $c.H - ($c.H % 2)
+  Write-Host "recording client area ${w}x${h} at ($($c.X),$($c.Y)) for $Seconds s"
+  $ff = Start-Process ffmpeg -ArgumentList '-y', '-loglevel', 'error', '-f', 'gdigrab', '-framerate', '60', '-offset_x', $c.X, '-offset_y', $c.Y, '-video_size', "${w}x${h}",
+    '-i', 'desktop', '-t', $Seconds, '-vf', 'scale=64:36', '-pix_fmt', 'rgb24', '-f', 'rawvideo', $raw -PassThru -WindowStyle Hidden
+  @{ Proc = $ff; Raw = $raw; Seconds = $Seconds }
+}
+
+# Wait for the recording to end, run the frame analyser on it (extra analyser arguments, e.g. --cycle), delete the raw file, and return
+# the analyser's exit code (0 = no violations).
+function Wait-Recording($rec, [string[]]$AnalyzerArgs = @()) {
+  $rec.Proc | Wait-Process -Timeout ($rec.Seconds + 15) -ErrorAction SilentlyContinue
+  $a = @((Join-Path $script:RepoRoot 'tools\analyze-frames.js'), $rec.Raw, 64, 36) + $AnalyzerArgs
+  & node @a | Out-Host
+  $code = $LASTEXITCODE
+  Remove-Item $rec.Raw -ErrorAction SilentlyContinue
+  $code
 }
 
 # Serve tools/test-pages over http on a free port. Returns Proc and Port; stop it with Stop-Process -Id.

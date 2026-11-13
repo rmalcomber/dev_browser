@@ -2,16 +2,22 @@
 <meta charset="utf-8">
 <title>colours (tool self-test)</title>
 <!--
-  A solid-colour page for the recording and screenshot tools. Starts red; pressing 1, 2 or 3 turns it red, blue or green, and the title says which.
-  With real key input (tools\record.ps1 -Keys "2@1500") it proves that keys reach the page and that the frame analyser sees the change.
+  A solid-colour page for the recording and screenshot tools. Starts red; pressing 1, 2 or 3 turns it red, blue or green, and the title says
+  which. The colour is kept in this profile's localStorage, so each workspace (a separate profile) keeps its own: that is how the S8 check
+  gives three workspaces three different colours on the same address (tools\s8-switch.ps1).
+  With real key input (tools\record.ps1 -Keys "2@1500") it also proves that keys reach the page and that the frame analyser sees the change.
 -->
 <body style="margin:0;background:#d00;color:#fff;font:120px sans-serif">
 <script>
   var colours = { '1': ['#d00', 'red'], '2': ['#00d', 'blue'], '3': ['#0a0', 'green'] };
-  document.title = 'red';
+  function apply(k) { var c = colours[k]; if (c) { document.body.style.background = c[0]; document.title = c[1]; } }
+  var saved = null;
+  try { saved = localStorage.getItem('colour'); } catch (e) {}
+  apply(saved && colours[saved] ? saved : '1');
   addEventListener('keydown', function (e) {
-    var c = colours[e.key];
-    if (c) { document.body.style.background = c[0]; document.title = c[1]; }
+    if (!colours[e.key]) return;
+    apply(e.key);
+    try { localStorage.setItem('colour', e.key); } catch (err) {}
   });
 </script>
 </body>

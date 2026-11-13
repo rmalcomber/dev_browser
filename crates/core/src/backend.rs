@@ -2,24 +2,29 @@
 //! command) at a time and executes what comes back: replies to send to the shell, and **effects** that only the host can carry out
 //! (show a tab's page, destroy a view, delete a workspace's data, move focus).
 //!
-//! Messages: `ping`; `workspaces.list|create|rename|colour|delete|activate`; `tabs.list|new|close|select|move`; `command` (run a
+//! Messages: `ping`; `workspaces.list|create|rename|colour|delete|activate|expand`; `tabs.list|new|close|select|move|open|group`;
+//! `groups.new|rename|collapse`; `command` (run a
 //! registered command by id, the same path a keyboard shortcut takes). Every state-changing message is answered with the full
 //! `workspaces` and `tabs` state, so the shell never patches its own copy. Invariants kept here:
 //! - there is always at least one workspace, exactly one is active, and every workspace has at least one tab with one selected;
 //! - ids from the shell are parsed (`Id::parse`) before use, and a tab must belong to the *active* workspace (a tab id from another
 //!   workspace is "no such tab"): the shell cannot reach across workspaces;
 //! - unknown fields, wrong types and oversized payloads are refused, not guessed at;
-//! - which tab views are alive is decided here (the last `MAX_LIVE_VIEWS` shown), so views are cheap to discard and recreate.
+//! - which tab views are alive is decided here (the last `MAX_LIVE_VIEWS` shown), so views are cheap to discard and recreate;
+//! - **a collapsed workspace is only a name and an icon**: the `tabs` reply carries tab and group data for the *expanded* workspaces
+//!   only, so the titles and addresses of a collapsed workspace never reach the shell at all (S11). Activating a workspace expands it and
+//!   collapses the others; the chevron expands or collapses one without switching.
 
 use crate::commands::{self, Source};
 use crate::data::{DataDir, DataError};
+use crate::group;
 use crate::id::Id;
 use crate::ipc::{Refused, Reply, MAX_PAYLOAD_BYTES};
 use crate::tab::{self, Tab};
 use crate::{settings, url, workspace};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const PING: &str = "ping";
 pub const LIST: &str = "workspaces.list";
@@ -33,7 +38,16 @@ pub const TABS_NEW: &str = "tabs.new";
 pub const TABS_CLOSE: &str = "tabs.close";
 pub const TABS_SELECT: &str = "tabs.select";
 pub const TABS_MOVE: &str = "tabs.move";
+pub const WORKSPACES_EXPAND: &str = "workspaces.expand";
+pub const TABS_OPEN: &str = "tabs.open";
+pub const TABS_GROUP: &str = "tabs.group";
+pub const GROUPS_NEW: &str = "groups.new";
+pub const GROUPS_RENAME: &str = "groups.rename";
+pub const GROUPS_COLLAPSE: &str = "groups.collapse";
 pub const COMMAND: &str = "command";
+
+/// The name a new group starts with; the user renames it.
+const NEW_GROUP_NAME: &str = "Group";
 
 /// Colour and name of the workspace made on first run.
 const FIRST_NAME: &str = "Default";
@@ -47,7 +61,15 @@ pub const MAX_LIVE_VIEWS: usize = 8;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Effect {
     /// Show this tab's page (creating the workspace's profile and the tab's view first if needed) and hide everything else.
-    Show { workspace: Id, tab: Id, url: String },
+    Show {
+        workspace: Id,
+        tab: Id,
+        url: String,
+        /// The workspace's accent colour (0xRRGGBB), drawn as a frame around its pages.
+        colour: u32,
+    },
+    /// The workspace was recoloured: redraw the frame of its existing views.
+    SetAccent { workspace: Id, colour: u32 },
     /// Destroy this tab's view. The record is kept (a discard) or already gone (a close): the host does not need to know which.
     DestroyView { workspace: Id, tab: Id },
     /// Close all of this workspace's views, release its profile, then remove its folders. The record is already gone.
@@ -56,6 +78,8 @@ pub enum Effect {
     FocusPage,
     /// Give keyboard focus to the sidebar.
     FocusShell,
+    /// Give keyboard focus to the sidebar and open its "new workspace" name field.
+    NewWorkspaceForm,
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -84,13 +108,29 @@ struct TabOut {
     title: String,
     url: String,
     position: u32,
+    group: Option<String>,
+}
+
+#[derive(Serialize)]
+struct GroupOut {
+    id: String,
+    name: String,
+    position: u32,
+    collapsed: bool,
+}
+
+/// One expanded workspace's tabs and groups, in the order the sidebar shows them.
+#[derive(Serialize)]
+struct SectionOut {
+    workspace: String,
+    selected: Option<String>,
+    groups: Vec<GroupOut>,
+    tabs: Vec<TabOut>,
 }
 
 #[derive(Serialize)]
 struct TabsOut {
-    workspace: String,
-    selected: Option<String>,
-    tabs: Vec<TabOut>,
+    sections: Vec<SectionOut>,
 }
 
 #[derive(Serialize)]
@@ -140,6 +180,48 @@ struct MoveIn {
     position: u32,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpandIn {
+    id: String,
+    expanded: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpenIn {
+    workspace: String,
+    id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TabIn {
+    tab: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupRenameIn {
+    id: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupCollapseIn {
+    id: String,
+    collapsed: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TabGroupIn {
+    id: String,
+    /// A group id, or null for "no group". Must be present: a missing field is refused rather than read as null.
+    group: serde_json::Value,
+}
+
 /// A parsed, validated request.
 enum Action {
     Ping(String),
@@ -154,6 +236,12 @@ enum Action {
     CloseTab(Id),
     SelectTab(Id),
     MoveTab { id: Id, position: u32 },
+    Expand { id: Id, expanded: bool },
+    OpenTab { workspace: Id, id: Id },
+    NewGroup(Id),
+    RenameGroup { id: Id, name: String },
+    CollapseGroup { id: Id, collapsed: bool },
+    GroupTab { id: Id, group: Option<Id> },
     Command(&'static str),
 }
 
@@ -164,6 +252,8 @@ pub struct Backend {
     data: DataDir,
     global: Connection,
     active: Id,
+    /// The workspaces shown expanded in the sidebar. Session state: the active workspace only, at start.
+    expanded: HashSet<Id>,
     /// Open workspace databases, kept so a tab operation does not reopen and re-migrate a file. Dropped when the workspace is deleted.
     workspace_dbs: HashMap<Id, Connection>,
     /// The page a new tab opens (until the launcher and address bar exist).
@@ -197,6 +287,7 @@ impl Backend {
         Ok(Backend {
             data,
             global,
+            expanded: HashSet::from([active.clone()]),
             active,
             workspace_dbs: HashMap::new(),
             start_url,
@@ -249,28 +340,49 @@ impl Backend {
         }
     }
 
-    /// The `tabs` reply for the active workspace: its tabs in order and which one is selected.
+    /// The `tabs` reply: one section per **expanded** workspace (in workspace order) with its groups, its tabs in visual order and its
+    /// selected tab. A collapsed workspace has no section, so nothing about it reaches the shell.
     pub fn tabs_reply(&mut self) -> Reply {
-        let ws = self.active.clone();
-        let (tabs, selected) = self
-            .with_db(&ws, |c| Ok((tab::list(c)?, tab::selected(c)?)))
-            .unwrap_or_default();
-        let out = TabsOut {
-            workspace: ws.to_string(),
-            selected: selected.map(|t| t.id.to_string()),
-            tabs: tabs
-                .into_iter()
-                .map(|t| TabOut {
-                    id: t.id.to_string(),
-                    title: t.title,
-                    url: t.url,
-                    position: t.position,
-                })
-                .collect(),
-        };
+        let workspaces = workspace::list(&self.global).unwrap_or_default();
+        let mut sections = Vec::new();
+        for w in workspaces {
+            if !self.expanded.contains(&w.id) {
+                continue;
+            }
+            let _ = self.ensure_tabs(&w.id);
+            let data = self.with_db(&w.id, |c| {
+                Ok((tab::list(c)?, group::list(c)?, tab::selected(c)?))
+            });
+            let Ok((tabs, groups, selected)) = data else {
+                continue;
+            };
+            sections.push(SectionOut {
+                workspace: w.id.to_string(),
+                selected: selected.map(|t| t.id.to_string()),
+                groups: groups
+                    .into_iter()
+                    .map(|g| GroupOut {
+                        id: g.id.to_string(),
+                        name: g.name,
+                        position: g.position,
+                        collapsed: g.collapsed,
+                    })
+                    .collect(),
+                tabs: tabs
+                    .into_iter()
+                    .map(|t| TabOut {
+                        id: t.id.to_string(),
+                        title: t.title,
+                        url: t.url,
+                        position: t.position,
+                        group: t.group.map(|g| g.to_string()),
+                    })
+                    .collect(),
+            });
+        }
         Reply {
             name: "tabs",
-            payload: serde_json::to_string(&out).expect("tabs serialise"),
+            payload: serde_json::to_string(&TabsOut { sections }).expect("tabs serialise"),
         }
     }
 
@@ -319,7 +431,7 @@ impl Backend {
         let start = self.start_url.clone();
         self.with_db(ws, |c| {
             if tab::list(c)?.is_empty() {
-                let first = tab::create(c, &start, None)?;
+                let first = tab::create(c, &start, None, None)?;
                 tab::select(c, &first.id)?;
             }
             Ok(())
@@ -339,10 +451,14 @@ impl Backend {
     fn show(&mut self, ws: &Id, tab: &Tab, effects: &mut Vec<Effect>) -> Result<(), Failure> {
         let id = tab.id.clone();
         self.with_db(ws, |c| tab::select(c, &id))?;
+        let colour = workspace::get(&self.global, ws)
+            .map(|w| w.colour)
+            .unwrap_or(FIRST_COLOUR);
         effects.push(Effect::Show {
             workspace: ws.clone(),
             tab: tab.id.clone(),
             url: tab.url.clone(),
+            colour,
         });
         self.live.retain(|(_, t)| t != &tab.id);
         self.live.push((ws.clone(), tab.id.clone()));
@@ -368,6 +484,9 @@ impl Backend {
             return Err("there is no such workspace".into());
         }
         self.set_active(id).map_err(|e| e.to_string())?;
+        // the activated workspace is the one expanded; the chevron can open others without switching
+        self.expanded.clear();
+        self.expanded.insert(id.clone());
         let current = self.current(id)?;
         let mut effects = vec![];
         self.show(id, &current, &mut effects)?;
@@ -394,7 +513,7 @@ impl Backend {
     pub fn tab_title(&mut self, ws: &Id, tab_id: &Id, title: &str) -> Option<Reply> {
         let id = tab_id.clone();
         self.with_db(ws, |c| tab::set_title(c, &id, title)).ok()?;
-        (ws == &self.active).then(|| self.tabs_reply())
+        self.expanded.contains(ws).then(|| self.tabs_reply())
     }
 
     /// A page navigated. Only an address that may be re-opened is stored (`url::is_restorable`).
@@ -403,7 +522,7 @@ impl Backend {
         let stored = self
             .with_db(ws, |c| tab::set_url(c, &id, new_url))
             .unwrap_or(false);
-        (stored && ws == &self.active).then(|| self.tabs_reply())
+        (stored && self.expanded.contains(ws)).then(|| self.tabs_reply())
     }
 
     /// A tab's view went away without the app asking (the page closed itself, with `window.close()` for example). If the tab still
@@ -537,6 +656,54 @@ impl Backend {
                     position: r.position,
                 }
             }
+            WORKSPACES_EXPAND => {
+                let r: ExpandIn = Self::from_json(name, payload)?;
+                Action::Expand {
+                    id: Self::parse_id(name, &r.id)?,
+                    expanded: r.expanded,
+                }
+            }
+            TABS_OPEN => {
+                let r: OpenIn = Self::from_json(name, payload)?;
+                Action::OpenTab {
+                    workspace: Self::parse_id(name, &r.workspace)?,
+                    id: Self::parse_id(name, &r.id)?,
+                }
+            }
+            TABS_GROUP => {
+                let r: TabGroupIn = Self::from_json(name, payload)?;
+                Action::GroupTab {
+                    id: Self::parse_id(name, &r.id)?,
+                    group: match r.group {
+                        serde_json::Value::Null => None,
+                        serde_json::Value::String(g) => Some(Self::parse_id(name, &g)?),
+                        _ => {
+                            return Err(Refused::BadPayload {
+                                message: name.into(),
+                                why: "group must be an id or null".into(),
+                            })
+                        }
+                    },
+                }
+            }
+            GROUPS_NEW => {
+                let r: TabIn = Self::from_json(name, payload)?;
+                Action::NewGroup(Self::parse_id(name, &r.tab)?)
+            }
+            GROUPS_RENAME => {
+                let r: GroupRenameIn = Self::from_json(name, payload)?;
+                Action::RenameGroup {
+                    id: Self::parse_id(name, &r.id)?,
+                    name: r.name,
+                }
+            }
+            GROUPS_COLLAPSE => {
+                let r: GroupCollapseIn = Self::from_json(name, payload)?;
+                Action::CollapseGroup {
+                    id: Self::parse_id(name, &r.id)?,
+                    collapsed: r.collapsed,
+                }
+            }
             COMMAND => {
                 let r: IdIn = Self::from_json(name, payload)?;
                 match commands::find(&r.id) {
@@ -576,7 +743,57 @@ impl Backend {
                 Ok(self.both(vec![]))
             }
             Action::Colour { id, colour } => {
-                workspace::set_colour(&self.global, &id, colour).map_err(|e| e.to_string())?;
+                let w =
+                    workspace::set_colour(&self.global, &id, colour).map_err(|e| e.to_string())?;
+                Ok(self.both(vec![Effect::SetAccent {
+                    workspace: id,
+                    colour: w.colour,
+                }]))
+            }
+            Action::Expand { id, expanded } => {
+                if workspace::get(&self.global, &id).is_err() {
+                    return Err("there is no such workspace".into());
+                }
+                if expanded {
+                    self.expanded.insert(id);
+                } else {
+                    self.expanded.remove(&id);
+                }
+                Ok(self.both(vec![]))
+            }
+            Action::OpenTab { workspace, id } => {
+                if workspace::get(&self.global, &workspace).is_err() {
+                    return Err("there is no such workspace".into());
+                }
+                // the tab must be in that workspace's own database: another workspace's id is "no such tab"
+                let tab = self.with_db(&workspace, |c| tab::get(c, &id))?;
+                self.set_active(&workspace).map_err(|e| e.to_string())?;
+                self.expanded.clear();
+                self.expanded.insert(workspace.clone());
+                let mut effects = vec![];
+                self.show(&workspace, &tab, &mut effects)?;
+                Ok(self.both(effects))
+            }
+            Action::NewGroup(tab_id) => {
+                let ws = self.active.clone();
+                self.tab_in_active(&tab_id)?;
+                self.with_db(&ws, |c| group::create_for(c, &tab_id, NEW_GROUP_NAME))?;
+                Ok(self.both(vec![]))
+            }
+            Action::RenameGroup { id, name } => {
+                let ws = self.active.clone();
+                self.with_db(&ws, |c| group::rename(c, &id, &name))?;
+                Ok(self.both(vec![]))
+            }
+            Action::CollapseGroup { id, collapsed } => {
+                let ws = self.active.clone();
+                self.with_db(&ws, |c| group::set_collapsed(c, &id, collapsed))?;
+                Ok(self.both(vec![]))
+            }
+            Action::GroupTab { id, group: g } => {
+                let ws = self.active.clone();
+                self.tab_in_active(&id)?;
+                self.with_db(&ws, |c| group::assign(c, &id, g.as_ref()))?;
                 Ok(self.both(vec![]))
             }
             Action::Activate(id) => {
@@ -624,6 +841,7 @@ impl Backend {
         // release everything held for it: its views are the host's to destroy (DeleteWorkspace), its database file is closed here
         self.live.retain(|(w, _)| w != id);
         self.workspace_dbs.remove(id);
+        self.expanded.remove(id);
         let mut effects = vec![Effect::DeleteWorkspace(id.clone())];
         if &self.active == id {
             // the workspace that took its place in the list, or the one before it if it was last
@@ -642,8 +860,11 @@ impl Backend {
     fn new_tab(&mut self, url: Option<String>, focus: bool) -> Result<Outcome, Failure> {
         let ws = self.active.clone();
         let url = url.unwrap_or_else(|| self.start_url.clone());
-        let after = self.current(&ws)?.position + 1;
-        let created = self.with_db(&ws, |c| tab::create(c, &url, Some(after)))?;
+        // opened after the selected tab, and in its group, so a group's tabs stay together
+        let current = self.current(&ws)?;
+        let after = current.position + 1;
+        let group = current.group.clone();
+        let created = self.with_db(&ws, |c| tab::create(c, &url, Some(after), group.as_ref()))?;
         let mut effects = vec![];
         self.show(&ws, &created, &mut effects)?;
         if focus {
@@ -719,6 +940,20 @@ impl Backend {
             "tab.move.down" => self.move_selected(1),
             "tab.move.up" => self.move_selected(-1),
             "tab.discard" => self.discard_background(),
+            "tab.group.new" => {
+                let current = self.current(&ws)?;
+                self.with_db(&ws, |c| group::create_for(c, &current.id, NEW_GROUP_NAME))?;
+                Ok(self.both(vec![]))
+            }
+            "tab.ungroup" => {
+                let current = self.current(&ws)?;
+                self.with_db(&ws, |c| group::assign(c, &current.id, None))?;
+                Ok(self.both(vec![]))
+            }
+            "workspace.new" => Ok(Outcome {
+                replies: vec![],
+                effects: vec![Effect::NewWorkspaceForm],
+            }),
             "workspace.next" => self.step_workspace(1),
             "workspace.prev" => self.step_workspace(-1),
             "focus.cycle" => Ok(Outcome {
@@ -817,8 +1052,39 @@ mod tests {
         serde_json::from_str(&b.state_reply().payload).unwrap()
     }
 
+    /// The active workspace's section of the `tabs` reply: { workspace, selected, groups, tabs }.
     fn tabs(b: &mut Backend) -> Value {
-        serde_json::from_str(&b.tabs_reply().payload).unwrap()
+        let all: Value = serde_json::from_str(&b.tabs_reply().payload).unwrap();
+        let active = b.active().to_string();
+        all["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["workspace"] == active)
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+
+    /// The workspaces that have a section in the `tabs` reply (the expanded ones), by name.
+    fn expanded_names(b: &mut Backend) -> Vec<String> {
+        let all: Value = serde_json::from_str(&b.tabs_reply().payload).unwrap();
+        all["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                let id = s["workspace"].as_str().unwrap();
+                state(b)["workspaces"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|w| w["id"] == id)
+                    .unwrap()["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
     }
 
     fn tab_urls(b: &mut Backend) -> Vec<String> {
@@ -933,7 +1199,8 @@ mod tests {
                 Effect::Show {
                     workspace: ws,
                     tab: id(&sel),
-                    url: START.into()
+                    url: START.into(),
+                    colour: FIRST_COLOUR
                 },
                 Effect::FocusPage
             ]
@@ -986,7 +1253,14 @@ mod tests {
         assert!(o.effects.is_empty());
         assert_eq!(names(&b), vec!["Home"]);
         let o = send(&mut b, COLOUR, json!({"id": wid, "colour": 255}));
-        assert!(o.effects.is_empty());
+        // the host redraws the accent frame of this workspace's views; nothing else happens
+        assert_eq!(
+            o.effects,
+            vec![Effect::SetAccent {
+                workspace: id(&wid),
+                colour: 255
+            }]
+        );
         assert_eq!(state(&b)["workspaces"][0]["colour"], 255);
     }
 
@@ -1387,7 +1661,7 @@ mod tests {
             .tab_title(&ws, &tid, "Hello\nthere")
             .expect("active workspace");
         let t: Value = serde_json::from_str(&reply.payload).unwrap();
-        assert_eq!(t["tabs"][0]["title"], "Hello there");
+        assert_eq!(t["sections"][0]["tabs"][0]["title"], "Hello there");
         let reply = b
             .tab_url(&ws, &tid, "https://moved.example/page")
             .expect("stored");
@@ -1605,5 +1879,311 @@ mod tests {
         let mut b = Backend::open(DataDir::open(t.path()).unwrap(), "javascript:alert(1)").unwrap();
         b.startup();
         assert_eq!(tab_urls(&mut b), vec!["about:blank"]);
+    }
+
+    // ---- M1.4: expanded workspaces, privacy of collapsed ones, opening a tab elsewhere, groups, accent ----
+
+    /// A backend with workspaces "Default", "B" and "C" (C active), each with a tab titled after its workspace.
+    fn three_workspaces(tag: &str) -> (TempDir, Backend) {
+        let (t, mut b) = backend(tag);
+        b.startup();
+        for (name, colour) in [("B", 0x00AA00u32), ("C", 0x0000AAu32)] {
+            send(&mut b, CREATE, json!({"name": name, "colour": colour}));
+            let ws = b.active().clone();
+            let tid = id(&selected(&mut b));
+            b.tab_title(&ws, &tid, &format!("secret title of {name}"));
+            b.tab_url(
+                &ws,
+                &tid,
+                &format!("https://{}.secret.example/", name.to_lowercase()),
+            );
+        }
+        (t, b)
+    }
+
+    #[test]
+    fn only_the_active_workspace_is_expanded_at_first() {
+        let (_t, mut b) = backend("expanded0");
+        b.startup();
+        send(&mut b, CREATE, json!({"name": "Two", "colour": 2}));
+        assert_eq!(
+            expanded_names(&mut b),
+            vec!["Two"],
+            "creating a workspace activates and expands it, and collapses the rest"
+        );
+    }
+
+    #[test]
+    fn a_collapsed_workspaces_tabs_never_appear_in_the_reply() {
+        // S11 at the source: the shell only ever receives data for expanded workspaces
+        let (_t, mut b) = three_workspaces("s11core");
+        assert_eq!(expanded_names(&mut b), vec!["C"]);
+        let payload = b.tabs_reply().payload;
+        for secret in [
+            "secret title of B",
+            "b.secret.example",
+            "secret title of Default",
+        ] {
+            assert!(
+                !payload.contains(secret),
+                "the reply leaks {secret}: {payload}"
+            );
+        }
+        assert!(
+            payload.contains("secret title of C") && payload.contains("c.secret.example"),
+            "the expanded one is there"
+        );
+        // and the workspaces reply carries names and colours only
+        let ws = b.state_reply().payload;
+        assert!(!ws.contains("secret") && !ws.contains("example"), "{ws}");
+    }
+
+    #[test]
+    fn the_chevron_expands_and_collapses_without_switching() {
+        let (_t, mut b) = three_workspaces("chevron");
+        let b_id = id_of(&b, "B");
+        let active_before = state(&b)["active"].clone();
+        let o = send(
+            &mut b,
+            WORKSPACES_EXPAND,
+            json!({"id": b_id, "expanded": true}),
+        );
+        assert!(o.effects.is_empty(), "no page changes");
+        assert_eq!(
+            state(&b)["active"],
+            active_before,
+            "the active workspace did not change"
+        );
+        assert_eq!(expanded_names(&mut b), vec!["B", "C"]);
+        assert!(
+            b.tabs_reply().payload.contains("secret title of B"),
+            "expanding reveals its tabs"
+        );
+        send(
+            &mut b,
+            WORKSPACES_EXPAND,
+            json!({"id": b_id, "expanded": false}),
+        );
+        assert_eq!(expanded_names(&mut b), vec!["C"]);
+        assert!(
+            !b.tabs_reply().payload.contains("secret title of B"),
+            "collapsing hides them again"
+        );
+        // the active workspace can be collapsed too (its page stays)
+        let c_id = id_of(&b, "C");
+        send(
+            &mut b,
+            WORKSPACES_EXPAND,
+            json!({"id": c_id, "expanded": false}),
+        );
+        assert!(expanded_names(&mut b).is_empty());
+        let ghost = Id::new("ws").to_string();
+        let o = send(
+            &mut b,
+            WORKSPACES_EXPAND,
+            json!({"id": ghost, "expanded": true}),
+        );
+        assert_eq!(first_reply(&o).0, "error");
+    }
+
+    #[test]
+    fn activating_a_workspace_expands_it_and_collapses_the_others() {
+        let (_t, mut b) = three_workspaces("activate_collapse");
+        let (a_id, b_id) = (id_of(&b, "Default"), id_of(&b, "B"));
+        send(
+            &mut b,
+            WORKSPACES_EXPAND,
+            json!({"id": b_id, "expanded": true}),
+        );
+        assert_eq!(expanded_names(&mut b), vec!["B", "C"]);
+        send(&mut b, ACTIVATE, json!({"id": a_id}));
+        assert_eq!(expanded_names(&mut b), vec!["Default"]);
+        b.run_command("workspace.next", Source::Page);
+        assert_eq!(expanded_names(&mut b), vec!["B"]);
+    }
+
+    #[test]
+    fn opening_a_tab_in_another_workspace_switches_to_it_and_collapses_the_rest() {
+        let (_t, mut b) = three_workspaces("opentab");
+        let b_id = id_of(&b, "B");
+        send(
+            &mut b,
+            WORKSPACES_EXPAND,
+            json!({"id": b_id, "expanded": true}),
+        );
+        let all: Value = serde_json::from_str(&b.tabs_reply().payload).unwrap();
+        let b_section = all["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["workspace"] == b_id)
+            .unwrap()
+            .clone();
+        let b_tab = b_section["tabs"][0]["id"].as_str().unwrap().to_string();
+        let o = send(&mut b, TABS_OPEN, json!({"workspace": b_id, "id": b_tab}));
+        assert_eq!(state(&b)["active"], b_id);
+        assert_eq!(expanded_names(&mut b), vec!["B"]);
+        assert!(
+            matches!(&o.effects[..], [Effect::Show { workspace, tab, colour, .. }] if workspace.as_str() == b_id && tab.as_str() == b_tab && *colour == 0x00AA00)
+        );
+        // a tab that belongs to a different workspace is "no such tab", whichever workspace the message names
+        let c_tab = {
+            let c_id = id_of(&b, "Default");
+            send(&mut b, ACTIVATE, json!({"id": c_id}));
+            selected(&mut b)
+        };
+        let o = send(&mut b, TABS_OPEN, json!({"workspace": b_id, "id": c_tab}));
+        assert_eq!(first_reply(&o).0, "error");
+        assert!(o.effects.is_empty());
+        let ghost_ws = Id::new("ws").to_string();
+        let o = send(
+            &mut b,
+            TABS_OPEN,
+            json!({"workspace": ghost_ws, "id": c_tab}),
+        );
+        assert_eq!(first_reply(&o).0, "error");
+    }
+
+    #[test]
+    fn recolouring_asks_the_host_to_redraw_and_a_shown_tab_carries_its_workspaces_colour() {
+        let (_t, mut b) = backend("accent");
+        let wid = id_of(&b, "Default");
+        send(&mut b, COLOUR, json!({"id": wid, "colour": 0x123456}));
+        let o = send(&mut b, TABS_NEW, json!({}));
+        assert!(matches!(&o.effects[..], [Effect::Show { colour, .. }] if *colour == 0x123456));
+    }
+
+    #[test]
+    fn groups_can_be_made_named_collapsed_and_left_through_messages() {
+        let (_t, mut b) = backend("groups");
+        b.startup();
+        let ids = open_tabs(&mut b, 2); // [t0, ids0, ids1]
+        let t0 = tab_ids(&mut b)[0].clone();
+        let o = send(&mut b, GROUPS_NEW, json!({"tab": ids[0]}));
+        assert!(o.effects.is_empty(), "grouping changes no page");
+        let section = tabs(&mut b);
+        let g = section["groups"][0]["id"].as_str().unwrap().to_string();
+        assert_eq!(section["groups"][0]["name"], "Group");
+        assert_eq!(
+            tab_ids(&mut b),
+            vec![t0.clone(), ids[1].clone(), ids[0].clone()],
+            "ungrouped tabs first, the group's tab after"
+        );
+        assert_eq!(tabs(&mut b)["tabs"][2]["group"], g);
+        send(&mut b, GROUPS_RENAME, json!({"id": g, "name": "Reading"}));
+        send(&mut b, GROUPS_COLLAPSE, json!({"id": g, "collapsed": true}));
+        let section = tabs(&mut b);
+        assert_eq!(
+            (
+                section["groups"][0]["name"].as_str(),
+                section["groups"][0]["collapsed"].as_bool()
+            ),
+            (Some("Reading"), Some(true))
+        );
+        // add another tab to it (the group keeps its tabs in their existing relative order), then take both out
+        send(&mut b, TABS_GROUP, json!({"id": ids[1], "group": g}));
+        assert_eq!(
+            tab_ids(&mut b),
+            vec![t0.clone(), ids[1].clone(), ids[0].clone()]
+        );
+        send(&mut b, TABS_GROUP, json!({"id": ids[0], "group": null}));
+        send(&mut b, TABS_GROUP, json!({"id": ids[1], "group": null}));
+        assert!(
+            tabs(&mut b)["groups"].as_array().unwrap().is_empty(),
+            "an emptied group is gone"
+        );
+        // bad input is a user error, and nothing changes
+        let o = send(&mut b, GROUPS_RENAME, json!({"id": g, "name": "x"}));
+        assert_eq!(first_reply(&o).0, "error", "the group no longer exists");
+        let o = send(
+            &mut b,
+            GROUPS_NEW,
+            json!({"tab": Id::new("tab").to_string()}),
+        );
+        assert_eq!(first_reply(&o).0, "error");
+        let o = send(
+            &mut b,
+            TABS_GROUP,
+            json!({"id": ids[0], "group": Id::new("grp").to_string()}),
+        );
+        assert_eq!(first_reply(&o).0, "error");
+    }
+
+    #[test]
+    fn group_commands_group_and_ungroup_the_selected_tab_and_new_tabs_join_its_group() {
+        let (_t, mut b) = backend("groupcmd");
+        b.startup();
+        let first = selected(&mut b);
+        b.run_command("tab.group.new", Source::Page);
+        assert_eq!(tabs(&mut b)["groups"].as_array().unwrap().len(), 1);
+        // a new tab opened from a grouped tab stays in that group, so the group's tabs stay together
+        b.run_command("tab.new", Source::Page);
+        let second = selected(&mut b);
+        let section = tabs(&mut b);
+        assert_eq!(section["tabs"][1]["group"], section["groups"][0]["id"]);
+        assert_eq!(section["tabs"][0]["group"], section["groups"][0]["id"]);
+        b.run_command("tab.ungroup", Source::Page);
+        assert_eq!(
+            tabs(&mut b)["tabs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == second.as_str())
+                .unwrap()["group"],
+            Value::Null
+        );
+        assert_eq!(
+            tabs(&mut b)["groups"].as_array().unwrap().len(),
+            1,
+            "the first tab is still in it"
+        );
+        b.run_command("tab.select.1", Source::Page);
+        assert_eq!(selected(&mut b), tab_ids(&mut b)[0]);
+        let _ = first;
+    }
+
+    #[test]
+    fn tab_order_follows_the_sidebar_so_ctrl_tab_does_too() {
+        let (_t, mut b) = backend("groupstep");
+        b.startup();
+        open_tabs(&mut b, 2); // [t0, t1, t2], t2 selected
+        let before = tab_ids(&mut b);
+        send(&mut b, GROUPS_NEW, json!({"tab": before[0]})); // t0 leaves the front: [t1, t2 | G: t0]
+        let visual = tab_ids(&mut b);
+        assert_eq!(
+            visual,
+            vec![before[1].clone(), before[2].clone(), before[0].clone()]
+        );
+        send(&mut b, TABS_SELECT, json!({"id": visual[0]}));
+        let mut walked = vec![selected(&mut b)];
+        for _ in 0..2 {
+            b.run_command("tab.next", Source::Page);
+            walked.push(selected(&mut b));
+        }
+        assert_eq!(
+            walked, visual,
+            "Ctrl+Tab visits the tabs in the order the sidebar lists them"
+        );
+    }
+
+    #[test]
+    fn group_and_expand_messages_refuse_bad_payloads() {
+        let (_t, mut b) = backend("m14refused");
+        for (name, payload) in [
+            (WORKSPACES_EXPAND, r#"{"id":"ws-1"}"#),
+            (WORKSPACES_EXPAND, r#"{"id":"ws-1","expanded":"yes"}"#),
+            (TABS_OPEN, r#"{"workspace":"ws-1"}"#),
+            (TABS_OPEN, r#"{"workspace":"../x","id":"tab-1"}"#),
+            (TABS_GROUP, r#"{"id":"tab-1"}"#),
+            (TABS_GROUP, r#"{"id":"tab-1","group":5}"#),
+            (GROUPS_NEW, r#"{"tab":"tab-1","extra":1}"#),
+            (GROUPS_RENAME, r#"{"id":"grp-1"}"#),
+            (GROUPS_COLLAPSE, r#"{"id":"grp-1","collapsed":"no"}"#),
+        ] {
+            assert!(
+                matches!(b.handle(name, payload), Err(Refused::BadPayload { .. })),
+                "{name} {payload}"
+            );
+        }
     }
 }

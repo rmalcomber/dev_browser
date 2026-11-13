@@ -25,13 +25,17 @@ The Dev Browser is keyboard-first: every action is a named command with a defaul
 | `Ctrl+Shift+PageDown` | Move the tab down the list |
 | `Ctrl+Shift+PageUp` | Move the tab up the list |
 | `Ctrl+Shift+D` | Unload background tabs (their pages are closed to free memory; they reload when you select them) |
+| `Ctrl+Shift+G` | Put the tab in a new group (rename it in the sidebar) |
+| `Ctrl+Shift+U` | Take the tab out of its group (a group with no tabs disappears) |
+| `Alt+N` | New workspace (opens the name field in the sidebar) |
 | `Alt+PageDown` | Next workspace |
 | `Alt+PageUp` | Previous workspace |
 | `F6` | Move focus between the sidebar and the page |
 | `Esc` | While the focus is in the sidebar: return to the page |
 
-In the sidebar, `Tab` and `Shift+Tab` move between controls, the arrow keys move within the tab and workspace lists, and `Enter` activates
-the focused control.
+In the sidebar, `Tab` and `Shift+Tab` move between controls, `Up` and `Down` move between the workspaces and tabs, `Home` and `End` jump to
+the first and last, `Right` expands and `Left` collapses the focused workspace or group (without switching to it), and `Enter` activates the
+focused control.
 
 ## How shortcuts are routed
 

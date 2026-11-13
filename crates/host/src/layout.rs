@@ -10,8 +10,13 @@ use crate::state;
 use cef::*;
 
 pub const SHELL_WIDTH: i32 = 220;
-/// Width of the frame around a page, inside its wrapper panel (0 until M1.4 draws the workspace colour there).
-pub const FRAME_PX: i32 = 0;
+/// Width of the workspace-coloured frame around a page, inside its wrapper panel. A visual indicator, not a security boundary.
+pub const FRAME_PX: i32 = 3;
+
+/// A workspace colour (0xRRGGBB) as CEF's opaque ARGB.
+pub fn argb(rgb: u32) -> u32 {
+    0xFF00_0000 | (rgb & 0x00FF_FFFF)
+}
 
 /// A dark browser background (matches the app) turns the first unpainted frames of a new view dark instead of white.
 pub fn browser_settings() -> BrowserSettings {

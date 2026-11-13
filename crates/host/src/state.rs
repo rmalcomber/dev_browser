@@ -37,6 +37,8 @@ pub struct State {
     pub ready: HashSet<Id>,
     /// Tabs with a view.
     pub tabs: HashMap<Id, TabView>,
+    /// Each workspace's accent colour (0xRRGGBB), drawn as a frame around its pages. Set from core's `Show` and `SetAccent` effects.
+    pub accents: HashMap<Id, u32>,
     /// Tabs core asked to show whose workspace profile is still starting: (workspace, tab, url).
     pub waiting: Vec<(Id, Id, String)>,
     /// The tab that should be visible.
