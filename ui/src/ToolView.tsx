@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { copyText, leaveTool, runTool, tool, toolError, toolInput, toolOutput } from './launcherState';
+import { copyText, leaveTool, pin, runTool, tool, toolError, toolInput, toolOutput } from './launcherState';
 
 /** One labelled value with a button that copies exactly that value. */
-function FieldRow({ label, value, block }: { label: string; value: string; block: boolean }) {
+export function FieldRow({ label, value, block }: { label: string; value: string; block: boolean }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     if (await copyText(value)) {
@@ -35,6 +35,9 @@ export function ToolView() {
       <div class="thead">
         <button type="button" onClick={leaveTool} aria-label="Back to search">
           ← Back
+        </button>
+        <button type="button" onClick={() => pin(t.tool)} aria-label="Pin to the widget panel" title="Pin to the widget panel (it stays beside the page)">
+          Pin
         </button>
         <strong>{t.name}</strong>
         {t.sensitive && <span class="tsecret">not stored or logged</span>}

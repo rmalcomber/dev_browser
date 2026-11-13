@@ -46,8 +46,18 @@ pub struct State {
     pub shell: Option<BrowserView>,
     /// The launcher overlay: its view and the controller that places it above the pages.
     pub pending_launcher: Option<BrowserView>,
+    /// The right-hand widget panel: its view, the overlay that places it, and whether it is open and how wide (set by core).
+    pub pending_side: Option<BrowserView>,
+    pub side_view: Option<BrowserView>,
+    pub side_ctl: Option<OverlayController>,
+    pub side_open: bool,
+    /// A panel that core asked to open while the launcher was open: shown when the launcher closes.
+    pub side_deferred: Option<(bool, i32)>,
+    pub side_width: i32,
     pub launcher: Option<BrowserView>,
     pub launcher_ctl: Option<OverlayController>,
+    /// The launcher is showing (set by `launcher::show` and `hide`).
+    pub launcher_open: bool,
     /// A request context per workspace that has been shown in this run, and which of them are initialised (views may be created).
     pub contexts: HashMap<Id, RequestContext>,
     pub ready: HashSet<Id>,

@@ -184,3 +184,6 @@ export async function copyText(text: string): Promise<boolean> {
     return ok;
   }
 }
+
+/** Pin an instance of the open tool to the widget panel of the workspace in view. Only the tool is named; never what was typed into it. */
+export const pin = (toolId: string) => send('widgets.pin', { tool: toolId });

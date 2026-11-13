@@ -23,6 +23,8 @@ not logged or persisted). All three are in `security-acceptance-tests.md`.
 
 **M3.1 status: done 2026-11-13** (see the M3.1 entry in `docs/ai/decisions.md`). `tools\m31-tools.ps1` passes on the real window; S5, S9 and the single-pane part of S7 pass.
 
+**M3.2 status: done 2026-11-13** (see the M3.2 entry in `docs/ai/decisions.md`). `tools\m32-panel.ps1` passes on the real window.
+
 ## Not in M3
 
 Third-party tools and any sandbox for them, split-view panes (M4: until then the focused pane is the shown tab), clipboard read, network tools (curl, http) which need a network capability of their own.

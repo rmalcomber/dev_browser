@@ -27,6 +27,8 @@ pub fn open() {
     state::with(|s| s.shell = Some(shell));
     let launcher_view = crate::launcher::create_view();
     state::with(|s| s.pending_launcher = launcher_view);
+    let side_view = crate::sidepanel::create_view();
+    state::with(|s| s.pending_side = side_view);
     let mut delegate = Frame::new();
     window_create_top_level(Some(&mut delegate));
 }
@@ -52,6 +54,8 @@ wrap_window_delegate! {
                 let mut vs = View::from(&shell);
                 panel.add_child_view(Some(&mut vs));
             }
+            // the panel first, then the launcher: a later overlay is drawn above an earlier one, and the launcher must be above the panel
+            if let Some(v) = state::with(|s| s.pending_side.take()) { crate::sidepanel::attach(window, v); }
             if let Some(v) = state::with(|s| s.pending_launcher.take()) { crate::launcher::attach(window, v); }
             window.set_title(Some(&CefString::from("The Dev Browser")));
             state::with(|s| { s.panel = Some(panel); s.window = Some(window.clone()); });
@@ -67,7 +71,7 @@ wrap_window_delegate! {
             }
         }
         fn on_window_destroyed(&self, _w: Option<&mut Window>) {
-            state::with(|s| { s.shell = None; s.launcher = None; s.launcher_ctl = None; s.tabs.clear(); s.contexts.clear(); s.ready.clear(); s.waiting.clear(); s.panel = None; s.window = None; });
+            state::with(|s| { s.shell = None; s.launcher = None; s.launcher_ctl = None; s.side_view = None; s.side_ctl = None; s.tabs.clear(); s.contexts.clear(); s.ready.clear(); s.waiting.clear(); s.panel = None; s.window = None; });
             quit_message_loop();
         }
         fn window_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::ALLOY }

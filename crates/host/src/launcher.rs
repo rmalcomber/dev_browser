@@ -61,10 +61,13 @@ pub fn default_pos(window_width: i32) -> (i32, i32) {
     (((window_width - WIDTH) / 2).max(0), TOP)
 }
 
+/// The part of the window the launcher may use: all of it, less the widget panel when that is open (so the two never overlap).
 fn window_size() -> Option<(i32, i32)> {
-    state::with(|s| s.window.clone()).map(|w| {
+    let side = state::with(|s| if s.side_open { s.side_width } else { 0 });
+    // the content area (what the pages are laid out in), not the window with its frame
+    state::with(|s| s.panel.clone()).map(|w| {
         let z = w.size();
-        (z.width, z.height)
+        ((z.width - side).max(0), z.height)
     })
 }
 
@@ -97,8 +100,28 @@ pub fn show() {
     ctl.set_visible(1);
     view.set_visible(1);
     view.request_focus();
+    state::with(|s| s.launcher_open = true);
     println!("[host] launcher shown");
     crate::ipc::push_to_launcher("launcher.opened", "{}");
+}
+
+/// If the launcher is open, give it the keyboard focus again and say so.
+pub fn refocus() -> bool {
+    let (ctl, view) = (
+        state::with(|s| s.launcher_ctl.clone()),
+        state::with(|s| s.launcher.clone()),
+    );
+    match (ctl, view) {
+        (Some(_), Some(v)) if state::with(|s| s.launcher_open) => {
+            v.request_focus();
+            // the view may already think it has the focus while the browser inside it lost it to the panel: set it on the browser too
+            if let Some(h) = v.browser().and_then(|b| b.host()) {
+                h.set_focus(1);
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Hide it, remember where it is, and give the page the focus back.
@@ -120,8 +143,10 @@ pub fn hide() {
     if let Some(v) = view {
         v.set_visible(0);
     }
+    state::with(|s| s.launcher_open = false);
     println!("[host] launcher hidden");
     pages::focus_page();
+    crate::sidepanel::apply_deferred();
 }
 
 pub fn move_by(dx: i32, dy: i32) {

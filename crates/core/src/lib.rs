@@ -21,6 +21,7 @@ pub mod settings;
 pub mod tab;
 pub mod tools;
 pub mod url;
+pub mod widget;
 pub mod workspace;
 
 #[cfg(test)]

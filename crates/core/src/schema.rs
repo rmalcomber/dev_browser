@@ -75,7 +75,8 @@ pub const WORKSPACE: &[Migration] = &[
 
 /// The workspace's Home Screen database (`homescreen.db`): saved entries and launch counts. Kept apart from `browser.db` as the spec asks;
 /// the folder separation is organisation, not a security boundary.
-pub const HOMESCREEN: &[Migration] = &[Migration {
+pub const HOMESCREEN: &[Migration] = &[
+    Migration {
     version: 1,
     name: "entries and launch counts",
     sql: "
@@ -92,7 +93,20 @@ pub const HOMESCREEN: &[Migration] = &[Migration {
             last_used INTEGER NOT NULL
         );
     ",
-}];
+    },
+    Migration {
+        version: 2,
+        name: "pinned tools (widgets)",
+        sql: "
+        CREATE TABLE widgets (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool      TEXT NOT NULL,                 -- a bundled tool id; nothing typed into it is ever stored
+            position  INTEGER NOT NULL,
+            collapsed INTEGER NOT NULL DEFAULT 0
+        );
+    ",
+    },
+];
 
 #[cfg(test)]
 mod tests {

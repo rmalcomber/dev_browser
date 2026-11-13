@@ -56,8 +56,8 @@ wrap_panel_delegate! {
 }
 
 /// The page width for a given panel width.
-pub fn page_width(panel_width: i32) -> i32 {
-    (panel_width - SHELL_WIDTH).max(1)
+pub fn page_width(panel_width: i32, side: i32) -> i32 {
+    (panel_width - SHELL_WIDTH - side).max(1)
 }
 
 /// The set of visible views changed: re-install the layout even if the window size did not.
@@ -68,6 +68,7 @@ pub fn changed() {
 
 pub fn relayout() {
     crate::launcher::keep_inside();
+    crate::sidepanel::place();
     let (panel, shell, pages, last, generation) = state::with(|s| {
         (
             s.panel.clone(),
@@ -89,7 +90,7 @@ pub fn relayout() {
     }
     state::with(|s| {
         s.last_layout = (size.width, size.height, generation);
-        s.page_width = page_width(size.width);
+        s.page_width = page_width(size.width, if s.side_open { s.side_width } else { 0 });
     });
     let Some(layout) = panel.set_to_box_layout(Some(&BoxLayoutSettings {
         horizontal: 1,
@@ -114,7 +115,13 @@ pub fn relayout() {
 mod tests {
     #[test]
     fn the_page_takes_what_the_shell_leaves() {
-        assert_eq!(super::page_width(1200), 1200 - super::SHELL_WIDTH);
-        assert_eq!(super::page_width(100), 1, "never zero or negative");
+        assert_eq!(super::page_width(1200, 0), 1200 - super::SHELL_WIDTH);
+        assert_eq!(
+            super::page_width(1200, 320),
+            1200 - super::SHELL_WIDTH - 320,
+            "the panel takes its strip"
+        );
+        assert_eq!(super::page_width(100, 0), 1, "never zero or negative");
+        assert_eq!(super::page_width(400, 320), 1, "never zero or negative");
     }
 }

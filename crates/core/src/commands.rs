@@ -188,6 +188,11 @@ pub const COMMANDS: &[Command] = &[
     cmd!("nav.address", "Go to the address bar", ["ctrl+l"]),
     cmd!("launcher.open", "Open the launcher", ["ctrl+p"]),
     cmd!(
+        "panel.toggle",
+        "Show or hide the widget panel",
+        ["ctrl+shift+b"]
+    ),
+    cmd!(
         "bookmark.toggle",
         "Bookmark this page (or remove its bookmark)",
         ["ctrl+d"]

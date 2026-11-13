@@ -15,6 +15,7 @@ mod profile;
 mod render;
 mod selection;
 mod shell;
+mod sidepanel;
 mod state;
 mod window;
 

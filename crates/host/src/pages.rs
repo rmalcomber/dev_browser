@@ -8,7 +8,7 @@
 use crate::{
     downloads,
     handlers::{HostClient, Role},
-    ipc, launcher, layout, navigation, profile, selection, state,
+    ipc, launcher, layout, navigation, profile, selection, sidepanel, state,
     state::TabView,
 };
 use cef::*;
@@ -41,6 +41,7 @@ pub fn execute(effect: Effect) {
         Effect::NewWorkspaceForm => focus_shell("new-workspace"),
         Effect::Download { id, save } => downloads::decide(id, save),
         Effect::RequestSelection => selection::request(),
+        Effect::Panel { open, width, focus } => sidepanel::apply(open, width, focus),
         Effect::ShowLauncher => launcher::show(),
         Effect::HideLauncher => launcher::hide(),
         Effect::MoveLauncher { dx, dy } => launcher::move_by(dx, dy),
@@ -56,6 +57,12 @@ pub fn deliver(outcome: Outcome) {
         // the launcher's results go to the launcher only, everything else to the sidebar
         if reply.name.starts_with("launcher.") {
             ipc::push_to_launcher(reply.name, &reply.payload);
+        } else if reply.name == "widgets"
+            || reply.name.starts_with("widget.")
+            || reply.name.starts_with("panel.")
+        {
+            // the pinned tools and their results go to the panel; the sidebar does not need them
+            ipc::push_to_panel(reply.name, &reply.payload);
         } else {
             ipc::push_to_shell(reply.name, &reply.payload);
         }

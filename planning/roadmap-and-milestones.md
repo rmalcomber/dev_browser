@@ -44,7 +44,7 @@ Plan: [m1-plan.md](m1-plan.md) (draft).
 - [ ] Global tool registry; workspace-owned instances. (registry done in M3.1; instances are M3.2)
 - [x] Capability broker: selected text in, copy out, scoped search. (M3.1)
 - [x] JWT decoder and JSON formatter; sensitive input kept in memory only. (M3.1, with Base64, URL and UUID)
-- [ ] Right panel: resizable, collapsible, per-workspace sections, pin/unpin/reorder.
+- [ ] Right panel: resizable, collapsible, per-workspace sections, pin/unpin/reorder. (resizable, collapsible, sections, pin and unpin done in M3.2; reorder is M3.3)
 - [ ] Security tests for IPC, scope and storage.
 
 ## M4: Split view and hardening

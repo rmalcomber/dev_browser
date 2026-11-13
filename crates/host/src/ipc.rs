@@ -34,7 +34,7 @@ pub fn read(message: &ProcessMessage) -> Option<(String, String)> {
 /// Should the browser process believe a message from this view and frame? Only the trusted shell view, and only while its main frame is
 /// still an `app://shell/` page. Everything else is dropped and logged (S6).
 pub fn trusted(role: Role, frame_url: &str) -> bool {
-    matches!(role, Role::Shell | Role::Launcher) && shell::is_shell_url(frame_url)
+    matches!(role, Role::Shell | Role::Launcher | Role::Panel) && shell::is_shell_url(frame_url)
 }
 
 /// Browser side: a message arrived from a renderer.
@@ -60,6 +60,16 @@ pub fn on_message(role: Role, frame: &Frame, message: &ProcessMessage) -> bool {
         None => eprintln!("[host] dropped IPC message: no backend"),
     }
     true
+}
+
+/// Send a message to the widget panel's page (the pinned tools and their results go only there).
+pub fn push_to_panel(name: &str, payload: &str) {
+    let frame = state::with(|s| s.side_view.clone())
+        .and_then(|v| v.browser())
+        .and_then(|b| b.main_frame());
+    if let Some(frame) = frame {
+        send(&frame, ProcessId::RENDERER, name, payload);
+    }
 }
 
 /// Send a message to the launcher's page (only the launcher: its results are never shown to the sidebar).

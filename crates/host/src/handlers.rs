@@ -13,6 +13,8 @@ pub enum Role {
     Page,
     /// The launcher overlay: as trusted as the shell, but it has its own keys (Esc closes it) and its own replies.
     Launcher,
+    /// The right-hand widget panel: trusted like the shell, with the window-level shortcuts, and its own replies.
+    Panel,
 }
 
 impl Role {
@@ -21,12 +23,13 @@ impl Role {
             Role::Shell => "shell",
             Role::Page => "page",
             Role::Launcher => "launcher",
+            Role::Panel => "panel",
         }
     }
 
     fn source(self) -> Source {
         match self {
-            Role::Shell | Role::Launcher => Source::Shell,
+            Role::Shell | Role::Launcher | Role::Panel => Source::Shell,
             Role::Page => Source::Page,
         }
     }
@@ -205,7 +208,7 @@ wrap_request_handler! {
                     let failed = state::with(|s| s.errors.get(&tab).cloned().or_else(|| s.nav.get(&tab).map(|n| n.url.clone()))).unwrap_or_default();
                     navigation::error_page(&tab, b, Kind::Crashed, &failed, "the page's process ended");
                 }
-                Role::Shell | Role::Launcher => {
+                Role::Shell | Role::Launcher | Role::Panel => {
                     let n = state::with(|s| { s.shell_crashes += 1; s.shell_crashes });
                     if n <= 3 { eprintln!("[host] reloading the shell (attempt {n})"); b.reload(); } else { eprintln!("[host] the shell keeps crashing: not reloading it again"); }
                 }

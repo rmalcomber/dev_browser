@@ -55,7 +55,7 @@ try {
   [void](Open-Launcher $app)
   $b = Query-Box $app; Click-Client $app $b[0] $b[1]; Send-Text 'uuid'; Start-Sleep -Milliseconds 700; Send-Keys 'enter'; Start-Sleep -Milliseconds 1200
   Set-Clipboard -Value 'untouched'
-  foreach ($i in 1..3) { Send-Keys 'tab'; Start-Sleep -Milliseconds 150 }    # Back, Generate another, Copy UUID
+  foreach ($i in 1..4) { Send-Keys 'tab'; Start-Sleep -Milliseconds 150 }    # Back, Pin, Generate another, Copy UUID
   Send-Keys 'enter'; Start-Sleep -Milliseconds 800
   $clip = (Get-Clipboard -Raw)
   if ($clip -and $clip.Trim() -match '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') { Pass 'C: the UUID generator made a version 4 UUID and Copy copied it' } else { Fail "C: the clipboard has '$clip'" }

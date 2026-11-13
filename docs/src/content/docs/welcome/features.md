@@ -47,9 +47,9 @@ Home Screen tools such as the JWT decoder and JSON formatter run from the launch
 search `jwt`, and decode it. Tools only get what you hand them: no scraping, no cookies, no storage. Sensitive input stays
 in memory and is not saved by default. Any tool can be **pinned** to the widget panel.
 
-## Widget panel (planned)
+## Widget panel (works today, first version)
 
-A collapsible, resizable panel on the right holds pinned tools, in sections per workspace and coloured to match.
+A collapsible, resizable panel on the right holds pinned tools, in a section for the workspace you are in, coloured to match. Open a tool from the launcher and press **Pin**; `Ctrl+Shift+B` shows or hides the panel and puts the keyboard in it. Drag its left edge to resize it. Each widget can be collapsed or unpinned. The panel and its pinned tools come back after a restart; what you typed into them does not, and a token typed into one is cleared when the panel is hidden. Reordering widgets and showing two workspaces at once (split view) come later.
 
 ## Bookmarks and history (work today)
 

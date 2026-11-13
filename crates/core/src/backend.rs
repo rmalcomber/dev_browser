@@ -31,10 +31,16 @@ use std::collections::{HashMap, HashSet};
 
 mod launcher;
 mod places;
+mod widgets;
 use launcher::{DragIn, LauncherState, ScopeIn, SearchIn, ToolIn};
 pub use launcher::{
     ScopeRequest, LAUNCHER_CLOSE, LAUNCHER_DRAG, LAUNCHER_OPEN, LAUNCHER_RUN, LAUNCHER_SCOPE,
     LAUNCHER_SEARCH, LAUNCHER_TOOL,
+};
+use widgets::{CollapseIn, PinIn, ResizeIn, WidgetIdIn, WidgetRunIn};
+
+pub use widgets::{
+    PANEL_RESIZE, WIDGETS_COLLAPSE, WIDGETS_LIST, WIDGETS_PIN, WIDGETS_UNPIN, WIDGET_RUN,
 };
 
 pub const PING: &str = "ping";
@@ -130,6 +136,12 @@ pub enum Effect {
     MoveLauncher {
         dx: i32,
         dy: i32,
+    },
+    /// Show, hide or resize the right-hand widget panel; `focus` also puts the keyboard focus in it.
+    Panel {
+        open: bool,
+        width: i32,
+        focus: bool,
     },
     /// Ask the shown page for its text selection (`page.selection.read`), on the user action of opening the launcher.
     RequestSelection,
@@ -375,6 +387,21 @@ enum Action {
         tool: String,
         input: String,
     },
+    WidgetsList,
+    WidgetsPin(String),
+    WidgetsUnpin(i64),
+    WidgetsCollapse {
+        id: i64,
+        collapsed: bool,
+    },
+    WidgetRun {
+        id: i64,
+        input: String,
+    },
+    PanelResize {
+        dx: i32,
+        done: bool,
+    },
 }
 
 /// A user-facing failure (shown in the shell), as opposed to a `Refused` protocol violation.
@@ -399,6 +426,9 @@ pub struct Backend {
     /// Downloads offered to the user and not yet answered (ids made by the host). The shell can only answer these.
     offers: HashSet<u32>,
     launcher: LauncherState,
+    /// The right-hand widget panel: open or not, and how wide (saved in the global settings).
+    panel_open: bool,
+    panel_width: i32,
     orphans_removed: Vec<Id>,
 }
 
@@ -423,6 +453,7 @@ impl Backend {
         } else {
             "about:blank".to_string()
         };
+        let (panel_open, panel_width) = Self::load_panel(&global);
         Ok(Backend {
             data,
             global,
@@ -435,6 +466,8 @@ impl Backend {
             favicons: HashMap::new(),
             offers: HashSet::new(),
             launcher: LauncherState::default(),
+            panel_open,
+            panel_width,
             orphans_removed,
         })
     }
@@ -554,7 +587,7 @@ impl Backend {
 
     fn both(&mut self, effects: Vec<Effect>) -> Outcome {
         Outcome {
-            replies: vec![self.state_reply(), self.tabs_reply()],
+            replies: vec![self.state_reply(), self.tabs_reply(), self.widgets_reply()],
             effects,
         }
     }
@@ -673,6 +706,7 @@ impl Backend {
         if let Err(e) = result {
             return Self::user_error("startup", e);
         }
+        effects.push(self.panel_effect(false));
         effects.push(Effect::FocusPage);
         self.both(effects)
     }
@@ -1004,6 +1038,42 @@ impl Backend {
                 let r: IdIn = Self::from_json(name, payload)?;
                 Action::LauncherRun(r.id)
             }
+            WIDGETS_LIST => {
+                Self::no_payload(name, payload)?;
+                Action::WidgetsList
+            }
+            WIDGETS_PIN => {
+                let r: PinIn = Self::from_json(name, payload)?;
+                Action::WidgetsPin(r.tool)
+            }
+            WIDGETS_UNPIN => {
+                let r: WidgetIdIn = Self::from_json(name, payload)?;
+                Action::WidgetsUnpin(r.id)
+            }
+            WIDGETS_COLLAPSE => {
+                let r: CollapseIn = Self::from_json(name, payload)?;
+                Action::WidgetsCollapse {
+                    id: r.id,
+                    collapsed: r.collapsed,
+                }
+            }
+            WIDGET_RUN => {
+                let r: WidgetRunIn = Self::from_json(name, payload)?;
+                if r.input.len() > crate::tools::MAX_INPUT_BYTES {
+                    return Err(Refused::PayloadTooLarge(r.input.len()));
+                }
+                Action::WidgetRun {
+                    id: r.id,
+                    input: r.input,
+                }
+            }
+            PANEL_RESIZE => {
+                let r: ResizeIn = Self::from_json(name, payload)?;
+                Action::PanelResize {
+                    dx: r.dx,
+                    done: r.done,
+                }
+            }
             LAUNCHER_TOOL => {
                 let r: ToolIn = Self::from_json(name, payload)?;
                 Action::LauncherTool {
@@ -1075,6 +1145,15 @@ impl Backend {
                 self.launcher_set_scope(&kind, &workspaces)
             }
             Action::LauncherRun(id) => self.launcher_run(&id),
+            Action::WidgetsList => Ok(Outcome {
+                replies: vec![self.widgets_reply()],
+                effects: vec![],
+            }),
+            Action::WidgetsPin(tool) => self.widgets_pin(&tool),
+            Action::WidgetsUnpin(id) => self.widgets_unpin(id),
+            Action::WidgetsCollapse { id, collapsed } => self.widgets_collapse(id, collapsed),
+            Action::WidgetRun { id, input } => self.widget_run(id, &input),
+            Action::PanelResize { dx, done } => self.panel_resize(dx, done),
             Action::LauncherTool { tool, input } => self.launcher_tool(&tool, &input),
             Action::LauncherDrag { dx, dy } => Ok(Self::launcher_drag(dx, dy)),
             Action::DownloadDecide { id, save } => {
@@ -1321,6 +1400,7 @@ impl Backend {
             "nav.stop" => Ok(Self::just(Effect::Stop)),
             "nav.address" => Ok(Self::just(Effect::FocusAddress)),
             "launcher.open" => Ok(self.launcher_open()),
+            "panel.toggle" => self.panel_toggle(),
             "bookmark.toggle" => self.bookmark_toggle(),
             "history.clear" => self.history_clear(),
             "entry.save" => self.entry_save(None),
@@ -1600,10 +1680,19 @@ mod tests {
                     url: START.into(),
                     colour: FIRST_COLOUR
                 },
+                Effect::Panel {
+                    open: false,
+                    width: widgets::PANEL_DEFAULT,
+                    focus: false
+                },
                 Effect::FocusPage
             ]
         );
-        assert_eq!(o.replies.len(), 2, "the shell gets workspaces and tabs");
+        assert_eq!(
+            o.replies.len(),
+            3,
+            "the shell gets workspaces, tabs and the pinned tools"
+        );
     }
 
     #[test]
@@ -3920,5 +4009,245 @@ b{}",
         ));
         assert_eq!(a, c);
         let _ = work;
+    }
+
+    // ---- the widget panel (M3.2) ----
+
+    fn panel(o: &Outcome) -> Value {
+        let r = o
+            .replies
+            .iter()
+            .find(|r| r.name == "widgets")
+            .expect("a widgets reply");
+        serde_json::from_str(&r.payload).unwrap()
+    }
+
+    fn pinned(v: &Value) -> Vec<String> {
+        v["sections"][0]["widgets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["tool"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn pinning_adds_a_widget_to_the_active_workspace_reveals_the_panel_and_says_so() {
+        let (_t, mut b, work, personal) = work_and_personal("w-pin");
+        let o = send(&mut b, WIDGETS_PIN, json!({"tool": "jwt"}));
+        let p = panel(&o);
+        assert_eq!(p["open"], true);
+        assert_eq!(pinned(&p), vec!["jwt"]);
+        assert_eq!(p["sections"][0]["workspace"]["name"], "Default");
+        assert!(o
+            .replies
+            .iter()
+            .any(|r| r.name == "notice" && r.payload.contains("Pinned")));
+        assert_eq!(
+            o.effects,
+            vec![Effect::Panel {
+                open: true,
+                width: widgets::PANEL_DEFAULT,
+                focus: false
+            }]
+        );
+        send(&mut b, WIDGETS_PIN, json!({"tool": "jwt"}));
+        send(&mut b, WIDGETS_PIN, json!({"tool": "uuid"}));
+        let p = panel(&send(&mut b, WIDGETS_LIST, json!({})));
+        assert_eq!(
+            pinned(&p),
+            vec!["jwt", "jwt", "uuid"],
+            "several instances of one tool are fine"
+        );
+        // another workspace has none of them
+        send(&mut b, ACTIVATE, json!({"id": personal.as_str()}));
+        let p = panel(&send(&mut b, WIDGETS_LIST, json!({})));
+        assert_eq!(p["sections"][0]["workspace"]["name"], "Personal");
+        assert!(
+            pinned(&p).is_empty(),
+            "the panel shows only the workspace in view"
+        );
+        send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        assert_eq!(
+            pinned(&panel(&send(&mut b, WIDGETS_LIST, json!({})))).len(),
+            3
+        );
+        // unknown tools and too many are errors
+        assert_eq!(
+            first_reply(&send(&mut b, WIDGETS_PIN, json!({"tool": "nope"}))).0,
+            "error"
+        );
+        for _ in 0..20 {
+            send(&mut b, WIDGETS_PIN, json!({"tool": "uuid"}));
+        }
+        assert_eq!(
+            pinned(&panel(&send(&mut b, WIDGETS_LIST, json!({})))).len() as i64,
+            crate::widget::MAX_WIDGETS
+        );
+    }
+
+    #[test]
+    fn a_widget_of_another_workspace_cannot_be_run_collapsed_or_removed() {
+        let (_t, mut b, work, personal) = work_and_personal("w-scope");
+        send(&mut b, ACTIVATE, json!({"id": personal.as_str()}));
+        let o = send(&mut b, WIDGETS_PIN, json!({"tool": "json"}));
+        let id = panel(&o)["sections"][0]["widgets"][0]["id"]
+            .as_i64()
+            .unwrap();
+        send(&mut b, ACTIVATE, json!({"id": work.as_str()}));
+        // Personal's widget id means nothing while Work is in view
+        for (name, payload) in [
+            (WIDGET_RUN, json!({"id": id, "input": "{}"})),
+            (WIDGETS_COLLAPSE, json!({"id": id, "collapsed": true})),
+            (WIDGETS_UNPIN, json!({"id": id})),
+        ] {
+            let o = send(&mut b, name, payload);
+            assert_eq!(first_reply(&o).0, "error", "{name}");
+        }
+        send(&mut b, ACTIVATE, json!({"id": personal.as_str()}));
+        assert_eq!(
+            pinned(&panel(&send(&mut b, WIDGETS_LIST, json!({})))),
+            vec!["json"],
+            "and nothing was touched"
+        );
+    }
+
+    #[test]
+    fn a_widget_runs_its_tool_on_typed_text_collapses_and_unpins() {
+        let (_t, mut b, _w, _p) = work_and_personal("w-run");
+        let o = send(&mut b, WIDGETS_PIN, json!({"tool": "jwt"}));
+        let id = panel(&o)["sections"][0]["widgets"][0]["id"]
+            .as_i64()
+            .unwrap();
+        let o = send(&mut b, WIDGET_RUN, json!({"id": id, "input": TOKEN}));
+        let r: Value = serde_json::from_str(&o.replies[0].payload).unwrap();
+        assert_eq!(o.replies[0].name, "widget.output");
+        assert_eq!(r["id"], id);
+        assert!(r["output"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["label"] == "sub" && f["value"] == "alice"));
+        let o = send(&mut b, WIDGET_RUN, json!({"id": id, "input": "garbage"}));
+        assert!(serde_json::from_str::<Value>(&o.replies[0].payload).unwrap()["error"].is_string());
+        let p = panel(&send(
+            &mut b,
+            WIDGETS_COLLAPSE,
+            json!({"id": id, "collapsed": true}),
+        ));
+        assert_eq!(p["sections"][0]["widgets"][0]["collapsed"], true);
+        let p = panel(&send(&mut b, WIDGETS_UNPIN, json!({"id": id})));
+        assert!(pinned(&p).is_empty());
+        assert_eq!(
+            first_reply(&send(&mut b, WIDGETS_UNPIN, json!({"id": id}))).0,
+            "error"
+        );
+        // strict messages
+        assert!(b
+            .handle(WIDGET_RUN, r#"{"id":1,"input":"x","scope":"all"}"#)
+            .is_err());
+        assert!(b
+            .handle(WIDGETS_PIN, r#"{"tool":"jwt","workspace":"x"}"#)
+            .is_err());
+        assert!(b
+            .handle(
+                WIDGET_RUN,
+                &json!({"id": 1, "input": "x".repeat(crate::tools::MAX_INPUT_BYTES + 1)})
+                    .to_string()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn the_panel_opens_closes_resizes_within_bounds_and_is_remembered() {
+        let t = TempDir::new("w-panel");
+        {
+            let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
+            b.startup();
+            let o = b.run_command("panel.toggle", Source::Page);
+            assert_eq!(
+                o.effects,
+                vec![Effect::Panel {
+                    open: true,
+                    width: widgets::PANEL_DEFAULT,
+                    focus: true
+                }]
+            );
+            // a drag to the left (negative dx) makes it wider, within the limits; nothing is saved until the drag ends
+            let o = send(&mut b, PANEL_RESIZE, json!({"dx": -100, "done": false}));
+            assert_eq!(
+                o.effects,
+                vec![Effect::Panel {
+                    open: true,
+                    width: widgets::PANEL_DEFAULT + 100,
+                    focus: false
+                }]
+            );
+            send(&mut b, PANEL_RESIZE, json!({"dx": -5000, "done": false}));
+            assert_eq!(b.panel_width, widgets::PANEL_MAX);
+            send(&mut b, PANEL_RESIZE, json!({"dx": 5000, "done": true}));
+            assert_eq!(b.panel_width, widgets::PANEL_MIN);
+            send(&mut b, PANEL_RESIZE, json!({"dx": -60, "done": true}));
+        }
+        let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
+        let o = b.startup();
+        assert!(
+            o.effects.contains(&Effect::Panel {
+                open: true,
+                width: widgets::PANEL_MIN + 60,
+                focus: false
+            }),
+            "{:?}",
+            o.effects
+        );
+        let o = b.run_command("panel.toggle", Source::Page);
+        assert_eq!(
+            o.effects,
+            vec![Effect::Panel {
+                open: false,
+                width: widgets::PANEL_MIN + 60,
+                focus: false
+            }]
+        );
+        // a resize while closed does nothing
+        assert!(send(&mut b, PANEL_RESIZE, json!({"dx": 10, "done": true}))
+            .effects
+            .is_empty());
+    }
+
+    /// S9 for widgets: text typed into a pinned tool is never written to the data folder; only the layout is.
+    #[test]
+    fn s9_nothing_typed_into_a_widget_reaches_the_disk() {
+        let (t, mut b, _w, _p) = work_and_personal("w-s9");
+        let o = send(&mut b, WIDGETS_PIN, json!({"tool": "jwt"}));
+        let id = panel(&o)["sections"][0]["widgets"][0]["id"]
+            .as_i64()
+            .unwrap();
+        let token = format!("{TOKEN}.d2lkZ2V0LXNlY3JldA");
+        send(&mut b, WIDGET_RUN, json!({"id": id, "input": token}));
+        send(
+            &mut b,
+            WIDGETS_COLLAPSE,
+            json!({"id": id, "collapsed": true}),
+        );
+        drop(b);
+        let mut found = vec![];
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, found);
+                } else if let Ok(bytes) = std::fs::read(&p) {
+                    let text = String::from_utf8_lossy(&bytes);
+                    for n in ["d2lkZ2V0LXNlY3JldA", "eyJzdWIiOiJhbGljZSIs"] {
+                        if text.contains(n) {
+                            found.push(format!("{n} in {}", p.display()));
+                        }
+                    }
+                }
+            }
+        }
+        walk(t.path(), &mut found);
+        assert!(found.is_empty(), "{found:?}");
     }
 }
