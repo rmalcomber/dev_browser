@@ -38,9 +38,12 @@ Push-Location $root
 try {
   switch ($Task) {
     'check' {
-      Need 'cargo', 'npm'
+      # clippy compiles the host, which builds cef-dll-sys, so it needs the same inputs as a build
+      Need 'cargo', 'npm', 'cmake', 'ninja'
+      if (-not $env:CEF_PATH) { $env:CEF_PATH = "$env:USERPROFILE/.local/share/cef" }
+      $env:CEF_PATH = $env:CEF_PATH.Replace([string][char]92, '/')
       Run 'cargo fmt --check' { cargo fmt --all -- --check }
-      Run 'cargo clippy (core)' { cargo clippy -p dev_browser_core --all-targets -- -D warnings }
+      Run 'cargo clippy' { cargo clippy --workspace --all-targets -- -D warnings }
       Run 'cargo test' { cargo test --workspace }
       UiInstalled
       Run 'ui tests' { Push-Location ui; try { npm test } finally { Pop-Location } }

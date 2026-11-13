@@ -73,6 +73,11 @@ impl DataDir {
         Ok(d)
     }
 
+    /// A `DataDir` that has not touched the disk. For processes that must not create folders (CEF child processes).
+    pub fn unopened(root: impl Into<PathBuf>) -> DataDir {
+        DataDir { root: root.into() }
+    }
+
     /// The default location on this machine: `%LOCALAPPDATA%\dev_browser` on Windows (decision D6). `None` if it cannot be worked out.
     pub fn default_location() -> Option<PathBuf> {
         std::env::var_os("LOCALAPPDATA").map(|p| Path::new(&p).join("dev_browser"))
