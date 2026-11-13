@@ -68,6 +68,9 @@ pub struct State {
     pub next_download: u32,
     /// How many times in a row the shell's renderer has died and been reloaded.
     pub shell_crashes: u32,
+    /// A selection request in flight: its one-time id and the tab it was sent to (see `selection`).
+    pub selection_pending: Option<(u32, Id)>,
+    pub selection_seq: u32,
     /// The tab that should be visible.
     pub shown: Option<Id>,
     /// Tabs whose view the app itself is closing, so the browser's close event is not mistaken for the page closing itself.

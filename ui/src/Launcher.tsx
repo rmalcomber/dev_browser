@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { ToolView } from './ToolView';
 import { css } from './state';
 import {
   allWorkspaces,
@@ -12,6 +13,8 @@ import {
   scope,
   search,
   selected,
+  selection,
+  tool,
 } from './launcherState';
 
 /** The launcher: a search box over what the app says is in scope, and the way to widen that scope on purpose. */
@@ -91,6 +94,10 @@ export function Launcher() {
           {label}
         </span>
       </div>
+      {tool.value ? (
+        <ToolView />
+      ) : (
+        <>
       <input
         ref={box}
         class="lquery"
@@ -106,6 +113,11 @@ export function Launcher() {
         onInput={(e) => search((e.currentTarget as HTMLInputElement).value)}
         onKeyDown={onKey}
       />
+      {selection.value && (
+        <div class="lselection" role="status">
+          Selected on the page: <q>{selection.value.preview}</q> ({selection.value.length} characters)
+        </div>
+      )}
       <ul id="results" class="lresults" role="listbox">
         {list.map((r, i) => (
           <li
@@ -124,6 +136,7 @@ export function Launcher() {
             )}
             <span class="ltitle">{r.title}</span>
             {r.tag && <span class={`ltag ${r.tag}`}>{r.tag}</span>}
+            {r.kind === "tool" && <span class="lkind" title="tool">⚙</span>}
             {(r.kind === "bookmark" || r.kind === "history" || r.kind === "entry") && (
               <span class="lkind" title={r.kind}>
                 {r.kind === "bookmark" ? "★" : r.kind === "entry" ? "◆" : "↺"}
@@ -147,6 +160,8 @@ export function Launcher() {
           </button>
         ))}
       </div>
+        </>
+      )}
     </div>
   );
 }

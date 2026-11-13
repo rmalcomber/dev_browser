@@ -33,6 +33,7 @@ unlocked interactive desktop: **leave the mouse and keyboard alone while one run
 | Script | What it does |
 | --- | --- |
 | `s6-hostile-page.ps1` | S6: a hostile page cannot see `window.m0` or reach `app://shell`. Needs node. Exit code 0 = pass. |
+| `m31-tools.ps1` | M3.1 checks: a real triple-click selects a token, `Ctrl+P` captures it, the JWT decoder starts from it and Copy puts a chosen claim on the clipboard, the UUID tool, nothing captured over another tab, and the token in no database or log line (S9). About 2 minutes; needs node. |
 | `m23-entries.ps1` | M2.3 checks: saving entries from the launcher (with an environment), finding and opening one, ranking by how often a result was opened, and clearing history resetting the order. About 2 minutes; needs node. |
 | `m22-places.ps1` | M2.2 checks: a page found in history, `Ctrl+D` and the bookmark found, clearing history keeps the bookmark, and a bookmark of another workspace is not found until "All workspaces" is chosen. About 2 minutes; needs node. |
 | `m21-launcher.ps1` | M2.1 checks: `Ctrl+P` from a page, a frame and the address bar, `Esc`, a real mouse drag, scope (a page in another workspace is not found until "All workspaces" is chosen, and the wide scope is gone after closing), and running a command. About 2 minutes; needs node. Clicks the launcher at fixed positions; see the script. |

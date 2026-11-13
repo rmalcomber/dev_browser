@@ -31,10 +31,10 @@ use std::collections::{HashMap, HashSet};
 
 mod launcher;
 mod places;
-use launcher::{DragIn, LauncherState, ScopeIn, SearchIn};
+use launcher::{DragIn, LauncherState, ScopeIn, SearchIn, ToolIn};
 pub use launcher::{
     ScopeRequest, LAUNCHER_CLOSE, LAUNCHER_DRAG, LAUNCHER_OPEN, LAUNCHER_RUN, LAUNCHER_SCOPE,
-    LAUNCHER_SEARCH,
+    LAUNCHER_SEARCH, LAUNCHER_TOOL,
 };
 
 pub const PING: &str = "ping";
@@ -131,6 +131,8 @@ pub enum Effect {
         dx: i32,
         dy: i32,
     },
+    /// Ask the shown page for its text selection (`page.selection.read`), on the user action of opening the launcher.
+    RequestSelection,
     /// The user answered a download offer: save it (to the app's own folder, under a safe name) or cancel it.
     Download {
         id: u32,
@@ -368,6 +370,10 @@ enum Action {
     LauncherDrag {
         dx: i32,
         dy: i32,
+    },
+    LauncherTool {
+        tool: String,
+        input: String,
     },
 }
 
@@ -998,6 +1004,13 @@ impl Backend {
                 let r: IdIn = Self::from_json(name, payload)?;
                 Action::LauncherRun(r.id)
             }
+            LAUNCHER_TOOL => {
+                let r: ToolIn = Self::from_json(name, payload)?;
+                Action::LauncherTool {
+                    tool: r.tool,
+                    input: r.input,
+                }
+            }
             LAUNCHER_DRAG => {
                 let r: DragIn = Self::from_json(name, payload)?;
                 Action::LauncherDrag { dx: r.dx, dy: r.dy }
@@ -1062,6 +1075,7 @@ impl Backend {
                 self.launcher_set_scope(&kind, &workspaces)
             }
             Action::LauncherRun(id) => self.launcher_run(&id),
+            Action::LauncherTool { tool, input } => self.launcher_tool(&tool, &input),
             Action::LauncherDrag { dx, dy } => Ok(Self::launcher_drag(dx, dy)),
             Action::DownloadDecide { id, save } => {
                 // only an offer that is still open can be answered, once
@@ -3685,5 +3699,226 @@ b{}",
                 < order.iter().position(|o| o == "Default:Orchid Beta"),
             "and do not touch Work's: {order:?}"
         );
+    }
+
+    // ---- tools and the page selection (M3.1): S5 (structure is in tools.rs), S7 (selection), S9 ----
+
+    const TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsIm5hbWUiOiJBbGljZSIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAzNjAwfQ.c2lnbmF0dXJl";
+
+    fn tool_output(o: &Outcome) -> Value {
+        let r = o
+            .replies
+            .iter()
+            .find(|r| r.name == "launcher.tool.output")
+            .expect("a tool output");
+        serde_json::from_str(&r.payload).unwrap()
+    }
+
+    #[test]
+    fn tools_are_results_found_by_name_or_keyword_and_open_inside_the_launcher() {
+        let (_t, mut b, _w, _p) = work_and_personal("t-find");
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        for (q, tool) in [
+            ("jwt", "tool/jwt"),
+            ("token decode", "tool/jwt"),
+            ("format", "tool/json"),
+            ("guid", "tool/uuid"),
+            ("percent", "tool/url"),
+            ("b64", "tool/base64"),
+        ] {
+            let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": q})));
+            let ids: Vec<&str> = r["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x["id"].as_str().unwrap())
+                .collect();
+            assert!(ids.contains(&tool), "{q}: {ids:?}");
+        }
+        // an empty search lists the tools too (they are global, not data), and a tool has no workspace
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": ""})));
+        let tool = r["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["kind"] == "tool")
+            .expect("tools listed")
+            .clone();
+        assert!(tool["workspace"].is_null());
+        // choosing one keeps the launcher open and answers with the tool and its first output
+        let o = send(&mut b, LAUNCHER_RUN, json!({"id": "tool/uuid"}));
+        assert!(o.effects.is_empty(), "the launcher stays open");
+        assert_eq!(o.replies[0].name, "launcher.tool.opened");
+        assert_eq!(tool_output(&o)["tool"], "uuid");
+        assert!(b.launcher.open);
+    }
+
+    #[test]
+    fn a_tool_runs_on_typed_text_and_errors_are_a_message_not_a_failure() {
+        let (_t, mut b, _w, _p) = work_and_personal("t-run");
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        let o = send(
+            &mut b,
+            LAUNCHER_TOOL,
+            json!({"tool": "jwt", "input": TOKEN}),
+        );
+        let v = tool_output(&o);
+        assert!(v["error"].is_null());
+        assert!(v["output"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["label"] == "sub" && f["value"] == "alice"));
+        let o = send(
+            &mut b,
+            LAUNCHER_TOOL,
+            json!({"tool": "jwt", "input": "garbage"}),
+        );
+        assert!(tool_output(&o)["error"].is_string());
+        assert_eq!(
+            first_reply(&send(
+                &mut b,
+                LAUNCHER_TOOL,
+                json!({"tool": "nope", "input": ""})
+            ))
+            .0,
+            "error"
+        );
+        // extra fields, and a closed launcher, are refused
+        assert!(b
+            .handle(LAUNCHER_TOOL, r#"{"tool":"jwt","input":"x","scope":"all"}"#)
+            .is_err());
+        send(&mut b, LAUNCHER_CLOSE, json!({}));
+        assert_eq!(
+            first_reply(&send(
+                &mut b,
+                LAUNCHER_TOOL,
+                json!({"tool": "uuid", "input": ""})
+            ))
+            .0,
+            "error"
+        );
+    }
+
+    #[test]
+    fn opening_the_launcher_asks_for_the_selection_and_it_is_kept_only_while_open() {
+        let (_t, mut b, _w, _p) = work_and_personal("t-selection");
+        let o = send(&mut b, LAUNCHER_OPEN, json!({}));
+        assert_eq!(
+            o.effects,
+            vec![Effect::RequestSelection, Effect::ShowLauncher]
+        );
+        let r = b
+            .set_selection(&format!("  {TOKEN} \u{0}"))
+            .expect("a reply while open");
+        let v: Value = serde_json::from_str(&r.payload).unwrap();
+        assert_eq!(v["length"], TOKEN.len() + 3);
+        assert!(v["preview"].as_str().unwrap().chars().count() <= 40);
+        // a tool that suits the selection is first, and is opened with it as its input
+        let r = results(&send(&mut b, LAUNCHER_SEARCH, json!({"query": ""})));
+        assert_eq!(r["results"][0]["id"], "tool/jwt");
+        assert_eq!(r["selection"]["length"], TOKEN.len() + 3);
+        let o = send(&mut b, LAUNCHER_RUN, json!({"id": "tool/jwt"}));
+        let opened: Value = serde_json::from_str(&o.replies[0].payload).unwrap();
+        assert_eq!(opened["from_selection"], true);
+        assert!(opened["input"].as_str().unwrap().contains(TOKEN));
+        assert!(tool_output(&o)["output"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["label"] == "sub"));
+        // a tool that reads no input does not take the selection
+        let o = send(&mut b, LAUNCHER_RUN, json!({"id": "tool/uuid"}));
+        let opened: Value = serde_json::from_str(&o.replies[0].payload).unwrap();
+        assert_eq!(
+            (opened["from_selection"].clone(), opened["input"].clone()),
+            (json!(false), json!(""))
+        );
+        // closing drops it; a late answer after closing is ignored and leaves nothing
+        send(&mut b, LAUNCHER_CLOSE, json!({}));
+        assert!(b.launcher.selection.is_none());
+        assert!(b.set_selection("late answer").is_none());
+        assert!(b.launcher.selection.is_none());
+        // and the next opening starts without it
+        let r = results(&send(&mut b, LAUNCHER_OPEN, json!({})));
+        assert!(r["selection"].is_null());
+    }
+
+    #[test]
+    fn an_empty_or_huge_selection_is_handled() {
+        let (_t, mut b, _w, _p) = work_and_personal("t-selection-size");
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        let r = b.set_selection("   \n ").unwrap();
+        assert_eq!(r.payload, "null", "nothing selected");
+        b.set_selection(&"x".repeat(crate::tools::MAX_INPUT_BYTES * 3))
+            .unwrap();
+        assert!(b.launcher.selection.as_ref().unwrap().len() <= crate::tools::MAX_INPUT_BYTES);
+    }
+
+    /// S9: after a token went through the selection and a tool, it is in no database file of the data folder, and no reply to the
+    /// sidebar mentions it.
+    #[test]
+    fn s9_a_token_is_never_written_to_the_data_folder() {
+        let (t, mut b, work, _personal) = work_and_personal("t-s9");
+        let marker = "ZmFrZS1zZWNyZXQ";
+        let token = format!("{TOKEN}.{marker}");
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        b.set_selection(&token);
+        send(&mut b, LAUNCHER_RUN, json!({"id": "tool/jwt"}));
+        send(
+            &mut b,
+            LAUNCHER_TOOL,
+            json!({"tool": "base64", "input": token.clone()}),
+        );
+        send(
+            &mut b,
+            LAUNCHER_TOOL,
+            json!({"tool": "jwt", "input": TOKEN}),
+        );
+        // use the browser as normal around it: a visit, a bookmark, an entry, history cleared
+        visit(&mut b, &work, "https://work.example/a", "A");
+        b.run_command("bookmark.toggle", Source::Page);
+        send(&mut b, LAUNCHER_CLOSE, json!({}));
+        drop(b); // flush and close every database
+        let mut found = vec![];
+        fn walk(dir: &std::path::Path, needles: &[&str], found: &mut Vec<String>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, needles, found);
+                } else if let Ok(bytes) = std::fs::read(&p) {
+                    let text = String::from_utf8_lossy(&bytes);
+                    for n in needles {
+                        if text.contains(n) {
+                            found.push(format!("{} in {}", n, p.display()));
+                        }
+                    }
+                }
+            }
+        }
+        walk(t.path(), &[marker, "eyJzdWIiOiJhbGljZSIs"], &mut found);
+        assert!(found.is_empty(), "a token reached the disk: {found:?}");
+    }
+
+    #[test]
+    fn tool_results_never_depend_on_the_workspace_scope() {
+        // a tool sees only its input: the same input gives the same answer whichever workspace is active
+        let (_t, mut b, work, personal) = work_and_personal("t-scope");
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        let a = tool_output(&send(
+            &mut b,
+            LAUNCHER_TOOL,
+            json!({"tool": "json", "input": "{\"a\":1}"}),
+        ));
+        send(&mut b, LAUNCHER_CLOSE, json!({}));
+        send(&mut b, ACTIVATE, json!({"id": personal.as_str()}));
+        send(&mut b, LAUNCHER_OPEN, json!({}));
+        let c = tool_output(&send(
+            &mut b,
+            LAUNCHER_TOOL,
+            json!({"tool": "json", "input": "{\"a\":1}"}),
+        ));
+        assert_eq!(a, c);
+        let _ = work;
     }
 }

@@ -8,7 +8,7 @@
 use crate::{
     downloads,
     handlers::{HostClient, Role},
-    ipc, launcher, layout, navigation, profile, state,
+    ipc, launcher, layout, navigation, profile, selection, state,
     state::TabView,
 };
 use cef::*;
@@ -40,6 +40,7 @@ pub fn execute(effect: Effect) {
         Effect::Stop => navigation::stop(),
         Effect::NewWorkspaceForm => focus_shell("new-workspace"),
         Effect::Download { id, save } => downloads::decide(id, save),
+        Effect::RequestSelection => selection::request(),
         Effect::ShowLauncher => launcher::show(),
         Effect::HideLauncher => launcher::hide(),
         Effect::MoveLauncher { dx, dy } => launcher::move_by(dx, dy),

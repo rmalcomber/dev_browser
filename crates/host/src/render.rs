@@ -7,7 +7,7 @@
 //! Shape: `m0.send(name, payload)` posts a process message to the browser; the browser's reply arrives here and is delivered by calling
 //! `m0.onmessage(name, payload)` if the shell has set one.
 
-use crate::{ipc, shell};
+use crate::{ipc, selection, shell};
 use cef::*;
 
 fn install(ctx: &mut V8Context) {
@@ -39,6 +39,43 @@ fn install(ctx: &mut V8Context) {
     );
 }
 
+/// Read `window.getSelection()` in the page's main frame and send the text back with the request's id. The text is only sent to the browser
+/// process (never to the page, never logged), and is cut to the size core accepts.
+fn answer_selection(frame: &Frame, id: &str) {
+    let Some(ctx) = frame.v8_context() else {
+        return;
+    };
+    if ctx.enter() != 1 {
+        return;
+    }
+    let mut result: Option<V8Value> = None;
+    let mut error: Option<V8Exception> = None;
+    let ok = ctx.eval(
+        Some(&CefString::from(
+            "(function(){try{return String(window.getSelection())}catch(e){return ''}})()",
+        )),
+        None,
+        0,
+        Some(&mut result),
+        Some(&mut error),
+    ) == 1;
+    let text = match (&result, ok) {
+        (Some(v), true) if v.is_string() == 1 => CefString::from(&v.string_value()).to_string(),
+        _ => String::new(),
+    };
+    ctx.exit();
+    let mut text = text;
+    while text.len() > selection::MAX_BYTES {
+        text.pop();
+    }
+    ipc::send(
+        frame,
+        ProcessId::BROWSER,
+        selection::REPLY,
+        &format!("{id}\n{text}"),
+    );
+}
+
 wrap_v8_handler! {
     struct SendToBrowser {}
     impl V8Handler {
@@ -67,7 +104,16 @@ wrap_render_process_handler! {
         fn on_process_message_received(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>, source: ProcessId, message: Option<&mut ProcessMessage>) -> i32 {
             let (Some(frame), Some(message)) = (frame, message) else { return 0 };
             if source != ProcessId::BROWSER { return 0 }
-            // Only the shell's own frame is ever sent to; if something else shows up, do nothing with it.
+            // The browser asking a page for its selection (page.selection.read): answered for any main frame, with the text and nothing else.
+            if frame.is_main() == 1 {
+                if let Some((name, payload)) = ipc::read(message) {
+                    if name == selection::REQUEST {
+                        answer_selection(frame, &payload);
+                        return 1;
+                    }
+                }
+            }
+            // Otherwise only the shell's own frame is ever sent to; if something else shows up, do nothing with it.
             if !shell::is_shell_url(&CefString::from(&frame.url()).to_string()) { return 0 }
             let Some((name, payload)) = ipc::read(message) else { return 0 };
             let js = format!("window.m0 && typeof window.m0.onmessage === 'function' && window.m0.onmessage({}, {});", ipc::js_string(&name), ipc::js_string(&payload));

@@ -27,6 +27,7 @@ These are rules the implementation must meet. Each has a matching acceptance tes
 - **Downloads** wait for your answer (Save or Cancel). They go to your Downloads folder under a safe file name and never overwrite an existing file.
 - **History** drops the `#fragment` of every address, so a token in one is never written down. History and bookmarks live in the workspace's own database; the launcher opens only the databases of the workspaces it is allowed to search, and a wider search is temporary.
 - **What you open often** only reorders results that already match, inside the workspaces you are searching. It is stored per workspace, never listed as "recent", and cleared with that workspace's history.
+- **Tools** are plain functions of the text you give them: no tab, workspace, database, file, network or clipboard is available to them. A token you decode stays in memory until the launcher closes and is never saved or logged. The text selected on a page is read only from the page in front of you, when you open the launcher.
 - **A crashed page** shows an error page in its own tab; the other tabs are not affected.
 
 ## Trust tiers

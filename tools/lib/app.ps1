@@ -212,3 +212,12 @@ function Start-TestServer {
   if (-not $port) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; throw 'the test server did not start' }
   @{ Proc = $p; Port = $port }
 }
+
+# Three quick clicks at a point (client-area pixels at 100% scale): selects the paragraph under it.
+function Triple-Click-Client($app, [double]$x, [double]$y) {
+  Ensure-Foreground
+  $c = Get-Client $app
+  [void][Win]::SetCursorPos($c.X + [int]$x, $c.Y + [int]$y); Start-Sleep -Milliseconds 150
+  foreach ($i in 1..3) { [Win]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); [Win]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60 }
+  Start-Sleep -Milliseconds 400
+}

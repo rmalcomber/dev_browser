@@ -37,7 +37,11 @@ The longer description follows.
 tabs, groups, bookmarks, history, Home Screen entries and tools of the workspaces you are working in, and nothing else.
 You can widen the search deliberately; it narrows again when you close the launcher. `Ctrl+D` bookmarks the focused page.
 
-## Tools (planned)
+## Tools (first five work today)
+
+From the launcher: a **JWT decoder**, a **JSON formatter**, **Base64**, **URL parts and encoding** and a **UUID generator**. Select a token on a page, press `Ctrl+P`, and the decoder is the first result and starts from your selection: read the header, every claim, the times (as dates, with how long ago or to go), and copy one value. Nothing is verified, stored or logged; the tool is only given the text, never your tabs, cookies or storage.
+
+The longer description follows.
 
 Home Screen tools such as the JWT decoder and JSON formatter run from the launcher. Select text on a page, press `Ctrl+P`,
 search `jwt`, and decode it. Tools only get what you hand them: no scraping, no cookies, no storage. Sensitive input stays

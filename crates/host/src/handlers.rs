@@ -303,6 +303,15 @@ wrap_client! {
         fn on_process_message_received(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>, source: ProcessId, message: Option<&mut ProcessMessage>) -> i32 {
             let (Some(frame), Some(message)) = (frame, message) else { return 0 };
             if source != ProcessId::RENDERER { return 0 }
+            // a page's renderer answering a selection request (page.selection.read): handled apart from the trusted shell's messages
+            if self.role == Role::Page && frame.is_main() == 1 {
+                if let Some((name, payload)) = ipc::read(message) {
+                    if name == crate::selection::REPLY {
+                        crate::selection::on_reply(&self.tab, &payload);
+                        return 1;
+                    }
+                }
+            }
             ipc::on_message(self.role, frame, message) as i32
         }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(Lifetime::new(self.workspace.clone(), self.tab.clone())) }

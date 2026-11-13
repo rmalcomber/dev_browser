@@ -8,7 +8,7 @@
 //! A result's id is opaque text; `launcher.run` resolves it again against the *current* scope and refuses one that is outside it (S2).
 
 use super::*;
-use crate::{bookmark, commands, entry, history, search};
+use crate::{bookmark, commands, entry, history, search, tools};
 
 pub const LAUNCHER_OPEN: &str = "launcher.open";
 pub const LAUNCHER_CLOSE: &str = "launcher.close";
@@ -16,6 +16,7 @@ pub const LAUNCHER_SEARCH: &str = "launcher.search";
 pub const LAUNCHER_SCOPE: &str = "launcher.scope";
 pub const LAUNCHER_RUN: &str = "launcher.run";
 pub const LAUNCHER_DRAG: &str = "launcher.drag";
+pub const LAUNCHER_TOOL: &str = "launcher.tool";
 
 pub const MAX_QUERY_CHARS: usize = 256;
 pub const MAX_RESULTS: usize = 30;
@@ -35,6 +36,9 @@ pub enum ScopeRequest {
 pub struct LauncherState {
     pub open: bool,
     pub scope: ScopeRequest,
+    /// The text selected on the shown page when the launcher opened (`page.selection.read`). In memory only: never stored, never logged,
+    /// dropped when the launcher closes (S9).
+    pub selection: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +53,13 @@ pub(super) struct ScopeIn {
     pub(super) kind: String,
     #[serde(default)]
     pub(super) workspaces: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ToolIn {
+    pub(super) tool: String,
+    pub(super) input: String,
 }
 
 #[derive(Deserialize)]
@@ -91,6 +102,26 @@ struct ResultsOut {
     /// Every workspace's name and colour (the sidebar already shows these), so the scope can be changed.
     all: Vec<WorkspaceRef>,
     results: Vec<ResultOut>,
+    /// What is selected on the page, if anything: its length and a short start, so the launcher can say so.
+    selection: Option<SelectionOut>,
+}
+
+#[derive(Serialize)]
+struct SelectionOut {
+    length: usize,
+    preview: String,
+}
+
+#[derive(Serialize)]
+struct ToolOpened {
+    tool: &'static str,
+    name: &'static str,
+    description: &'static str,
+    takes_input: bool,
+    sensitive: bool,
+    /// What to put in the input box to start: the page selection, if there is one and the tool reads input.
+    input: String,
+    from_selection: bool,
 }
 
 impl Backend {
@@ -134,10 +165,92 @@ impl Backend {
         self.launcher.open = true;
         let mut o = Outcome {
             replies: vec![],
-            effects: vec![Effect::ShowLauncher],
+            // ask the shown page what is selected (the answer comes back later, through `set_selection`), then show the launcher
+            effects: vec![Effect::RequestSelection, Effect::ShowLauncher],
         };
         o.replies.push(self.launcher_results(""));
         o
+    }
+
+    fn selection_out(&self) -> Option<SelectionOut> {
+        self.launcher.selection.as_ref().map(|s| SelectionOut {
+            length: s.chars().count(),
+            preview: s
+                .chars()
+                .take(40)
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect(),
+        })
+    }
+
+    /// The page's selection arrived (the host asked for it when the launcher opened). Kept for this opening of the launcher only.
+    /// Ignored if the launcher is no longer open, so a late answer cannot leave text behind (S9).
+    pub fn set_selection(&mut self, text: &str) -> Option<Reply> {
+        if !self.launcher.open {
+            return None;
+        }
+        let mut t: String = text
+            .chars()
+            .filter(|c| !c.is_control() || matches!(c, '\n' | '\t' | '\r'))
+            .collect();
+        while t.len() > tools::MAX_INPUT_BYTES {
+            t.pop();
+        }
+        self.launcher.selection = if t.trim().is_empty() { None } else { Some(t) };
+        Some(Reply {
+            name: "launcher.selection",
+            payload: serde_json::to_string(&self.selection_out()).expect("selection serialises"),
+        })
+    }
+
+    /// Run a tool on text the user typed or pasted, or on the selection. Only text goes in and only text comes out.
+    pub(super) fn launcher_tool(&mut self, tool: &str, input: &str) -> Result<Outcome, Failure> {
+        if !self.launcher.open {
+            return Err("the launcher is closed".into());
+        }
+        let info = tools::info(tool).ok_or("there is no such tool")?;
+        let payload = match tools::run(info.id, input, entry::clock()) {
+            Ok(o) => serde_json::json!({ "tool": info.id, "output": o, "error": null }),
+            Err(message) => {
+                serde_json::json!({ "tool": info.id, "output": null, "error": message })
+            }
+        };
+        Ok(Outcome {
+            replies: vec![Reply {
+                name: "launcher.tool.output",
+                payload: payload.to_string(),
+            }],
+            effects: vec![],
+        })
+    }
+
+    /// The user chose a tool result: open it in the launcher with the selection as its input (if it reads input) and run it once.
+    fn launcher_open_tool(&mut self, tool: &str) -> Result<Outcome, Failure> {
+        let info = tools::info(tool).ok_or("there is no such tool")?;
+        let from_selection = info.takes_input && self.launcher.selection.is_some();
+        let input = if from_selection {
+            self.launcher.selection.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let opened = ToolOpened {
+            tool: info.id,
+            name: info.name,
+            description: info.description,
+            takes_input: info.takes_input,
+            sensitive: info.sensitive,
+            input: input.clone(),
+            from_selection,
+        };
+        let mut o = self.launcher_tool(info.id, &input)?;
+        o.replies.insert(
+            0,
+            Reply {
+                name: "launcher.tool.opened",
+                payload: serde_json::to_string(&opened).expect("serialises"),
+            },
+        );
+        Ok(o)
     }
 
     /// Close the launcher: the scope goes back to the context's default and nothing is kept (S4).
@@ -312,6 +425,37 @@ impl Backend {
                 }
             }
         }
+        // the bundled tools, before the commands so a tie goes to the tool; a tool that suits the selected text comes first
+        let suggested = self
+            .launcher
+            .selection
+            .as_deref()
+            .map(tools::suggest)
+            .unwrap_or_default();
+        for t in tools::TOOLS {
+            // each word may match a different keyword ("token decode"), so the keywords are also matched as one text
+            let haystack = format!("{} {}", t.name, t.keywords.join(" "));
+            let s = std::iter::once(search::score(query, t.name).map(|s| s * 2))
+                .chain(std::iter::once(search::score(query, &haystack)))
+                .chain(t.keywords.iter().map(|k| search::score(query, k)))
+                .flatten()
+                .max();
+            if let Some(s) = s {
+                results.push(ResultOut {
+                    id: format!("tool/{}", t.id),
+                    kind: "tool",
+                    title: t.name.to_string(),
+                    subtitle: t.description.to_string(),
+                    workspace: None,
+                    score: s + 3 + if suggested.contains(&t.id) { 40 } else { 0 },
+                    tag: if suggested.contains(&t.id) {
+                        Some("selection")
+                    } else {
+                        None
+                    },
+                });
+            }
+        }
         for c in commands::COMMANDS.iter().filter(|c| c.id != CMD_OPEN) {
             // a command is searched by its label, with its id as a second chance ("tab.new")
             let s = [
@@ -372,6 +516,7 @@ impl Backend {
             },
             all: all.iter().map(Self::workspace_ref).collect(),
             results,
+            selection: self.selection_out(),
         };
         Reply {
             name: "launcher.results",
@@ -381,6 +526,10 @@ impl Backend {
 
     /// Run a result. Its id is checked against the scope as it is *now* (S2): a tab of a workspace outside it is refused.
     pub(super) fn launcher_run(&mut self, result_id: &str) -> Result<Outcome, Failure> {
+        // a tool opens inside the launcher; it does not close it
+        if let Some(tool) = result_id.strip_prefix("tool/") {
+            return self.launcher_open_tool(tool);
+        }
         let mut close = self.launcher_close_after(result_id)?;
         if let Some(rest) = result_id.strip_prefix("tab/") {
             let (ws, tab_id) = rest.split_once('/').ok_or("that result is not valid")?;

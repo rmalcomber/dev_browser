@@ -13,6 +13,7 @@ mod navigation;
 mod pages;
 mod profile;
 mod render;
+mod selection;
 mod shell;
 mod state;
 mod window;

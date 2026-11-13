@@ -19,6 +19,7 @@ pub mod schema;
 pub mod search;
 pub mod settings;
 pub mod tab;
+pub mod tools;
 pub mod url;
 pub mod workspace;
 
