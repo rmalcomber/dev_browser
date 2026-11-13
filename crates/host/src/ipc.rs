@@ -4,7 +4,6 @@
 
 use crate::{handlers::Role, pages, shell, state};
 use cef::*;
-use dev_browser_core::backend::Effect;
 
 /// Process-message name carrying every IPC v0 message; the real message name is argument 0.
 const WIRE: &str = "m0.msg";
@@ -55,21 +54,23 @@ pub fn on_message(role: Role, frame: &Frame, message: &ProcessMessage) -> bool {
     // The backend decides; the borrow of the state ends before any CEF call below.
     let outcome = state::with(|s| s.backend.as_mut().map(|b| b.handle(&name, &payload)));
     match outcome {
-        Some(Ok(outcome)) => {
-            for effect in outcome.effects {
-                match effect {
-                    Effect::Activate(id) => pages::show(&id),
-                    Effect::Delete(id) => pages::delete(&id),
-                }
-            }
-            for reply in outcome.replies {
-                send(frame, ProcessId::RENDERER, reply.name, &reply.payload);
-            }
-        }
+        // effects are carried out in order, then the replies go to the shell (all of them, not only to the sender's frame)
+        Some(Ok(outcome)) => pages::deliver(outcome),
         Some(Err(why)) => eprintln!("[host] refused IPC message: {why}"),
         None => eprintln!("[host] dropped IPC message: no backend"),
     }
     true
+}
+
+/// Send a message to the shell's page, whoever caused it (a key pressed in a page, a title that changed). Does nothing if the shell's
+/// page is not there yet; the shell asks for the full state when it starts.
+pub fn push_to_shell(name: &str, payload: &str) {
+    let frame = state::with(|s| s.shell.clone())
+        .and_then(|v| v.browser())
+        .and_then(|b| b.main_frame());
+    if let Some(frame) = frame {
+        send(&frame, ProcessId::RENDERER, name, payload);
+    }
 }
 
 /// A string as a JavaScript string literal, safe to put in code: quotes, backslashes, line breaks, `</script>` lookalikes and the two

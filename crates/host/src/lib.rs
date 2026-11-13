@@ -4,6 +4,7 @@
 mod app;
 mod handlers;
 mod ipc;
+mod keys;
 mod layout;
 mod pages;
 mod profile;
@@ -59,13 +60,14 @@ pub fn run(config: Config) -> i32 {
     };
     // Open the backend (global database, first workspace, orphan sweep) before CEF starts: nothing holds the profile folders yet, so the
     // sweep can remove what a locked delete left behind last time.
-    let backend = match dev_browser_core::backend::Backend::open(config.data.clone()) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("[host] cannot open the data folder: {e}");
-            return 1;
-        }
-    };
+    let backend =
+        match dev_browser_core::backend::Backend::open(config.data.clone(), &config.start_url) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("[host] cannot open the data folder: {e}");
+                return 1;
+            }
+        };
     for id in backend.orphans_removed() {
         println!("[host] removed leftover data of deleted workspace {id}");
     }
@@ -87,7 +89,7 @@ pub fn run(config: Config) -> i32 {
     }
     run_message_loop();
     shutdown();
-    // Nothing holds the profile folders now. Chromium kept a deleted workspace's profile open until here, so remove its data now.
+    // Nothing holds the profile folders now. A safety net: anything a crash or a locked file left behind is removed here.
     // Chromium's child processes can take a moment to let go after shutdown, so retry for a few seconds before giving up (the next
     // start sweeps again).
     if let Some(backend) = state::with(|s| s.backend.take()) {

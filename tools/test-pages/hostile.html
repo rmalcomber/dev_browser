@@ -6,7 +6,12 @@
   Served over http by tools/test-server.js. It reports what it saw in its own title, which the app logs as "[host] page title: [s6] {json}".
   Expected (every value is a pass): m0Type "undefined", m0Keys [], fetch/xhr "blocked", iframe "blocked".
 -->
-<body style="background:#400;color:#fff;font:24px sans-serif">hostile page running...
+<body style="background:#400;color:#fff;font:24px sans-serif;margin:0;padding:20px">
+<div id="out">hostile page running...</div>
+<!-- a real click on this link (toolss6-hostile-page.ps1 sends one) navigates to the trusted shell's address: the app must refuse it -->
+<a id="go" href="app://shell/index.html" style="position:absolute;left:20px;top:300px;color:#9cf;font-size:30px">open the shell</a>
+<!-- positive control: the same kind of click on an ordinary link must work, or the check above proves nothing -->
+<a id="ok" href="colours.html" style="position:absolute;left:20px;top:380px;color:#9cf;font-size:30px">an ordinary page</a>
 <script>
 (function () {
   var r = { m0Type: typeof window.m0, m0Keys: [], fetch: '?', xhr: '?', iframe: '?', topM0: typeof top.m0 };
@@ -16,7 +21,7 @@
   function done() {
     if (--pending > 0) return;
     document.title = '[s6] ' + JSON.stringify(r);
-    document.body.textContent = document.title;
+    document.getElementById('out').textContent = document.title;
   }
 
   // 1. fetch the shell page: it is a different origin and sends no CORS permission, so this must fail

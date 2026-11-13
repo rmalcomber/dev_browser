@@ -10,6 +10,8 @@ use crate::state;
 use cef::*;
 
 pub const SHELL_WIDTH: i32 = 220;
+/// Width of the frame around a page, inside its wrapper panel (0 until M1.4 draws the workspace colour there).
+pub const FRAME_PX: i32 = 0;
 
 /// A dark browser background (matches the app) turns the first unpainted frames of a new view dark instead of white.
 pub fn browser_settings() -> BrowserSettings {
@@ -24,13 +26,20 @@ wrap_browser_view_delegate! {
     pub struct ViewStyle { page: bool }
     impl ViewDelegate {
         fn preferred_size(&self, _v: Option<&mut View>) -> Size {
-            let w = if self.page { state::with(|s| s.page_width).max(1) } else { SHELL_WIDTH };
+            let w = if self.page { (state::with(|s| s.page_width) - 2 * FRAME_PX).max(1) } else { SHELL_WIDTH };
             Size { width: w, height: 100 }
         }
     }
     impl BrowserViewDelegate {
         fn browser_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::ALLOY }
     }
+}
+
+// The panel that holds one tab's view.
+wrap_panel_delegate! {
+    pub struct WrapEvents {}
+    impl ViewDelegate {}
+    impl PanelDelegate {}
 }
 
 wrap_panel_delegate! {
@@ -57,9 +66,9 @@ pub fn relayout() {
         (
             s.panel.clone(),
             s.shell.clone(),
-            s.pages
+            s.tabs
                 .values()
-                .filter_map(|p| p.view.clone())
+                .map(|t| t.wrapper.clone())
                 .collect::<Vec<_>>(),
             s.last_layout,
             s.layout_gen,
@@ -87,10 +96,10 @@ pub fn relayout() {
     let mut vs = View::from(&shell);
     layout.set_flex_for_view(Some(&mut vs), 0);
     shell.invalidate_layout();
-    for page in &pages {
-        let mut vp = View::from(page);
+    for wrapper in &pages {
+        let mut vp = View::from(wrapper);
         layout.set_flex_for_view(Some(&mut vp), 0);
-        page.invalidate_layout();
+        wrapper.invalidate_layout();
     }
     panel.invalidate_layout();
 }

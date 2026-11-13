@@ -23,3 +23,9 @@ input { font: inherit; color: #eee; background: #252526; border: 1px solid #4a4a
 .swatch.on { border-color: #fff; }
 .danger { background: #8b1d24; border-color: #b4323a; color: #fff; }
 .error { margin: 0; color: #ff8a8f; line-height: 1.4; }
+.tabs { border-top: 1px solid #333; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.tabrow { display: flex; gap: 2px; align-items: center; }
+.tab { flex: 1; min-width: 0; text-align: left; border-color: transparent; background: transparent; padding: 5px 8px; }
+.tab.active { background: #37373d; border-color: #4a4a50; color: #fff; }
+.x { flex: none; width: 22px; padding: 2px 0; text-align: center; border-color: transparent; background: transparent; color: #999; }
+.x:hover { color: #fff; background: #4a2a2c; }

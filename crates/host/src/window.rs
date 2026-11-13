@@ -8,7 +8,7 @@ use cef::*;
 
 /// Create the shell view and the window. Workspace pages are added later by `pages` (the first one when the window exists).
 pub fn open() {
-    let mut shell_client = HostClient::new(Role::Shell);
+    let mut shell_client = HostClient::new(Role::Shell, String::new(), String::new());
     let mut shell_style = layout::ViewStyle::new(false);
     // no request context: the shell uses CEF's global one, so it shares no cookies or storage with any workspace
     let Some(shell) = browser_view_create(
@@ -53,20 +53,21 @@ wrap_window_delegate! {
             // The first layout pass can come before the panel has its final size; look again shortly.
             let mut again = Relayout::new();
             post_delayed_task(ThreadId::UI, Some(&mut again), 300);
-            // the window exists, so the active workspace's page can be created in it
-            if let Some(active) = state::with(|s| s.backend.as_ref().map(|b| b.active().clone())) {
-                pages::show(&active);
+            // the window exists, so the selected tab can be shown in it
+            if let Some(outcome) = state::with(|s| s.backend.as_mut().map(|b| b.startup())) {
+                pages::deliver(outcome);
             }
         }
         fn on_window_destroyed(&self, _w: Option<&mut Window>) {
-            state::with(|s| { s.shell = None; s.pages.clear(); s.panel = None; s.window = None; });
+            state::with(|s| { s.shell = None; s.tabs.clear(); s.contexts.clear(); s.ready.clear(); s.waiting.clear(); s.panel = None; s.window = None; });
             quit_message_loop();
         }
         fn window_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::ALLOY }
         // Ask every browser to close. Each answers "not yet" the first time and CEF retries the window close for only one of them, which
         // needed a second click on X in M0. So retry here until every browser agrees.
         fn can_close(&self, _w: Option<&mut Window>) -> i32 {
-            let browsers = state::with(|s| s.browsers.clone());
+            // from here on browsers going away are the window closing, not tabs being closed
+            let browsers = state::with(|s| { s.shutting_down = true; s.browsers.clone() });
             let mut all = 1;
             for b in browsers { if let Some(h) = b.host() { if h.try_close_browser() != 1 { all = 0; } } }
             if all == 0 { let mut t = RetryClose::new(); post_delayed_task(ThreadId::UI, Some(&mut t), 150); }

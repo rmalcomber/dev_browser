@@ -1,21 +1,53 @@
 ---
 title: Keyboard shortcuts
-description: Proposed default shortcuts.
+description: The shortcuts that exist today, how they are routed, and the ones promised for later.
 sidebar:
   order: 4
 ---
 
-:::note[Proposed]
-Defaults are proposals. Key behaviour and conflicts are checked per operating system before they are frozen, and they
-become configurable later.
+:::note[Alpha]
+The defaults are fixed for now; they become configurable later. Every shortcut below is checked against the application's command list
+by an automated test, so this page cannot drift from what the app does.
 :::
 
-| Shortcut | Action |
+The Dev Browser is keyboard-first: every action is a named command with a default shortcut, and no action works only with the mouse.
+
+## Available now
+
+| Shortcut | Command |
 |---|---|
-| `Ctrl+P` | Open the launcher (replaces the browser print shortcut) |
-| `Escape` | Close the launcher and return focus |
-| `Ctrl+D` | Bookmark the focused page in its workspace |
-| `Ctrl+\` | Toggle split view |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab in the focused workspace |
-| `Ctrl+1` / `Ctrl+2` | Focus the left / right pane in split view |
-| `Ctrl+Shift+P` | Print the focused page (subject to a collision review) |
+| `Ctrl+T` | New tab, in the current workspace |
+| `Ctrl+W` | Close the tab (closing the last one opens a fresh tab) |
+| `Ctrl+Tab` | Next tab |
+| `Ctrl+Shift+Tab` | Previous tab |
+| `Alt+1` … `Alt+8` | Go to tab 1 to 8 (`Alt+1`, `Alt+2`, `Alt+3`, `Alt+4`, `Alt+5`, `Alt+6`, `Alt+7`, `Alt+8`) |
+| `Alt+9` | Go to the last tab |
+| `Ctrl+Shift+PageDown` | Move the tab down the list |
+| `Ctrl+Shift+PageUp` | Move the tab up the list |
+| `Ctrl+Shift+D` | Unload background tabs (their pages are closed to free memory; they reload when you select them) |
+| `Alt+PageDown` | Next workspace |
+| `Alt+PageUp` | Previous workspace |
+| `F6` | Move focus between the sidebar and the page |
+| `Esc` | While the focus is in the sidebar: return to the page |
+
+In the sidebar, `Tab` and `Shift+Tab` move between controls, the arrow keys move within the tab and workspace lists, and `Enter` activates
+the focused control.
+
+## How shortcuts are routed
+
+Shortcuts are handled by the browser itself, before a page sees the key, and they work wherever the focus is: in a page, inside a frame
+of a page, in a text field, or in the sidebar. The consequence is that **a page never receives these keys**: they are reserved by the
+browser, as `Ctrl+T` and `Ctrl+W` are in every browser. `Esc` is the one exception: it is only taken while the focus is in the sidebar,
+so pages keep their own use of it.
+
+## Promised for later
+
+| Shortcut | Planned command | When |
+|---|---|---|
+| `Ctrl+P` | Open the launcher (replaces the browser print shortcut) | M2 |
+| `Ctrl+D` | Bookmark the focused page in its workspace | later |
+| `Ctrl+\` | Toggle split view | M4 |
+| `Ctrl+1` / `Ctrl+2` | Focus the left / right pane in split view | M4 |
+| `Ctrl+Shift+P` | Print the focused page | later |
+
+Those keys are deliberately left unused so that nothing has to change when they arrive.

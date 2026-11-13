@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>keys (keyboard routing check)</title>
+<!--
+  Reports every non-modifier key it receives, in its title:  [keys] id=<random> seen=<list>
+  There is an input in the page (focused on load) and another inside an iframe, so key presses can be sent with the focus in a page or in a
+  frame of a page. A browser shortcut must be handled by the app and never reach this page: after pressing only shortcuts, seen= stays
+  empty. Plain typing must still arrive. (The modifier keys themselves, Control and so on, are not listed: pressing a modifier is not
+  the shortcut, and a page always sees those.)
+-->
+<body style="margin:0;font:16px sans-serif;background:#123;color:#fff">
+<input id="field" autofocus placeholder="page input" style="position:absolute;left:20px;top:20px;width:300px;height:30px">
+<iframe id="frame" srcdoc="<input id='inner' placeholder='iframe input' style='width:260px;height:30px;margin:10px'>" style="position:absolute;left:20px;top:100px;width:350px;height:100px;border:0;background:#345"></iframe>
+<script>
+(function () {
+  var id = Math.random().toString(36).slice(2, 8), seen = [];
+  function report() { document.title = '[keys] id=' + id + ' seen=' + seen.join(','); }
+  function onKey(e) {
+    if (['Control', 'Shift', 'Alt', 'Meta'].indexOf(e.key) >= 0) return;
+    seen.push(e.key);
+    report();
+  }
+  addEventListener('keydown', onKey);
+  document.getElementById('frame').addEventListener('load', function () {
+    this.contentWindow.addEventListener('keydown', onKey);
+  });
+  report();
+})();
+</script>
+</body>

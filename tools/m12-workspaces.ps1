@@ -58,9 +58,9 @@ try {
   if ($f.Chromium -eq 2 -and $f.Own -eq 2) { Pass 'each workspace has its own profile folder and database folder (2 + 2)' } else { Fail "expected 2 profile and 2 database folders, found $($f.Chromium) and $($f.Own)" }
 
   # switch back to the first workspace (click it) and make sure the app showed it again
-  $shownBefore = Count-Log $app 'workspace ws-\S+: shown'
+  $shownBefore = Count-Log $app 'tab tab-\S+: shown \(workspace ws-'
   Click-Client $app 60 53; Start-Sleep -Milliseconds 1200
-  if ((Count-Log $app 'workspace ws-\S+: shown') -gt $shownBefore) { Pass 'clicking the first workspace switched back to it' } else { Fail 'clicking the first workspace did nothing' }
+  if ((Count-Log $app 'tab tab-\S+: shown \(workspace ws-') -gt $shownBefore) { Pass 'clicking the first workspace switched back to it' } else { Fail 'clicking the first workspace did nothing' }
   Click-Client $app 60 86; Start-Sleep -Milliseconds 1200   # and to the second, which is the one to delete
 
   # delete the second (active) workspace through the UI: Delete, then confirm

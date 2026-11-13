@@ -6,9 +6,17 @@ import {
   createWorkspace,
   css,
   deleteWorkspace,
+  closeTab,
   lastError,
+  newTab,
+  pageFocus,
   recolourWorkspace,
   renameWorkspace,
+  selectTab,
+  selectedTab,
+  sidebarFocus,
+  tabLabel,
+  tabs,
   workspaces,
 } from './state';
 
@@ -68,6 +76,19 @@ function NameForm(props: { initial: string; label: string; onSave: (name: string
   );
 }
 
+/** Up and Down move between the workspace and tab buttons; Home and End jump to the first and last. */
+function navigate(e: KeyboardEvent) {
+  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
+  const target = e.target as HTMLElement;
+  if (!target.matches('[data-nav]')) return; // typing in a field keeps its own arrow keys
+  const items = Array.from(document.querySelectorAll<HTMLElement>('[data-nav]'));
+  const i = items.indexOf(target);
+  if (i < 0) return;
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : e.key === 'ArrowDown' ? Math.min(i + 1, items.length - 1) : Math.max(i - 1, 0);
+  items[next].focus();
+  e.preventDefault();
+}
+
 export function Sidebar() {
   const [mode, setMode] = useState<Mode>('none');
   const [newColour, setNewColour] = useState(PALETTE[0]);
@@ -75,8 +96,19 @@ export function Sidebar() {
   const active = list.find((w) => w.id === activeWorkspace.value);
   const close = () => setMode('none');
 
+  // the app moved focus out to the page (Esc, F6): an open form is abandoned, not left half-typed
+  useEffect(() => {
+    if (pageFocus.value > 0) setMode('none');
+  }, [pageFocus.value]);
+  // the app moved focus into the sidebar (F6): land on the selected tab, else the active workspace
+  useEffect(() => {
+    if (sidebarFocus.value === 0) return;
+    const el = document.querySelector<HTMLElement>('.tab[aria-current="true"]') ?? document.querySelector<HTMLElement>('.ws[aria-current="true"]');
+    el?.focus();
+  }, [sidebarFocus.value]);
+
   return (
-    <nav class="sidebar" aria-label="Workspaces">
+    <nav class="sidebar" aria-label="Workspaces and tabs" onKeyDown={navigate}>
       <h1>
         The Dev Browser <small>alpha</small>
       </h1>
@@ -86,6 +118,7 @@ export function Sidebar() {
           <li>
             <button
               type="button"
+              data-nav
               class={'ws' + (w.id === activeWorkspace.value ? ' active' : '')}
               aria-current={w.id === activeWorkspace.value ? 'true' : undefined}
               onClick={() => w.id !== activeWorkspace.value && activateWorkspace(w.id)}
@@ -183,6 +216,31 @@ export function Sidebar() {
           )}
         </section>
       )}
+
+      <section class="tabs" aria-label="Tabs">
+        <ul class="list">
+          {tabs.value.map((t) => (
+            <li class="tabrow">
+              <button
+                type="button"
+                data-nav
+                class={'tab' + (t.id === selectedTab.value ? ' active' : '')}
+                aria-current={t.id === selectedTab.value ? 'true' : undefined}
+                title={t.url}
+                onClick={() => t.id !== selectedTab.value && selectTab(t.id)}
+              >
+                <span class="name">{tabLabel(t)}</span>
+              </button>
+              <button type="button" class="x" aria-label={`Close tab ${tabLabel(t)}`} onClick={() => closeTab(t.id)}>
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+        <button type="button" class="add" onClick={() => newTab()}>
+          + New tab
+        </button>
+      </section>
 
       {lastError.value && (
         <p class="error" role="alert">

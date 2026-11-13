@@ -1,8 +1,10 @@
-//! Client handlers, split by concern. Every browser view in the app uses `HostClient`; what differs (trusted shell or ordinary page)
-//! is the `Role`.
+//! Client handlers, split by concern. Every browser view in the app uses `HostClient`; what differs (trusted shell or ordinary page, and
+//! for a page which workspace and tab it belongs to) is carried in the client.
 
-use crate::{ipc, state};
+use crate::{ipc, keys, pages, state};
 use cef::*;
+use dev_browser_core::commands::{self, Source};
+use dev_browser_core::id::Id;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -17,21 +19,30 @@ impl Role {
             Role::Page => "page",
         }
     }
+
+    fn source(self) -> Source {
+        match self {
+            Role::Shell => Source::Shell,
+            Role::Page => Source::Page,
+        }
+    }
 }
 
-// Tracks live browsers so the window can ask each to close, and ends the app when the last one is gone.
+// Tracks live browsers so the window can ask each to close, ends the app when the last one is gone, and tells core when a tab's page
+// closed itself.
 wrap_life_span_handler! {
-    struct Lifetime {}
+    struct Lifetime { workspace: String, tab: String }
     impl LifeSpanHandler {
         fn on_after_created(&self, b: Option<&mut Browser>) {
             if let Some(b) = b { state::with(|s| s.browsers.push(b.clone())); }
         }
         fn on_before_close(&self, b: Option<&mut Browser>) {
             let Some(mut b) = b.cloned() else { return };
-            let (left, window) = state::with(|s| {
+            state::with(|s| {
                 if let Some(i) = s.browsers.iter().position(|x| x.is_same(Some(&mut b)) != 0) { s.browsers.remove(i); }
-                (s.browsers.len(), s.window.clone())
             });
+            if !self.tab.is_empty() { pages::browser_closed(&self.workspace, &self.tab); }
+            let (left, window) = state::with(|s| (s.browsers.len(), s.window.clone()));
             if left == 0 { if let Some(w) = window { w.close(); } }
         }
     }
@@ -59,13 +70,70 @@ pub fn log_safe(text: &str, max_chars: usize) -> String {
         .collect()
 }
 
-// Titles are logged for pages so the S6 test page can report what it saw (tools/s6-hostile-page.ps1); the title bar will use them in M1.5.
+// A page's title and address go to its tab record (core cleans and checks them) and on to the shell. Titles are also logged so the test
+// pages can report back (tools/s6-hostile-page.ps1, tools/m13-tabs.ps1).
 wrap_display_handler! {
-    struct Titles { role: Role }
+    struct Titles { role: Role, workspace: String, tab: String }
     impl DisplayHandler {
         fn on_title_change(&self, _b: Option<&mut Browser>, title: Option<&CefString>) {
             let t = title.map(|t| t.to_string()).unwrap_or_default();
             println!("[host] {} title: {}", self.role.name(), log_safe(&t, 600));
+            if self.tab.is_empty() { return }
+            let (Ok(ws), Ok(tab)) = (Id::parse(&self.workspace), Id::parse(&self.tab)) else { return };
+            let push = state::with(|s| s.backend.as_mut().and_then(|b| b.tab_title(&ws, &tab, &t)));
+            if let Some(r) = push { ipc::push_to_shell(r.name, &r.payload); }
+        }
+        fn on_address_change(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
+            if self.tab.is_empty() { return }
+            if frame.map(|f| f.is_main()) != Some(1) { return }
+            let u = url.map(|u| u.to_string()).unwrap_or_default();
+            let (Ok(ws), Ok(tab)) = (Id::parse(&self.workspace), Id::parse(&self.tab)) else { return };
+            let push = state::with(|s| s.backend.as_mut().and_then(|b| b.tab_url(&ws, &tab, &u)));
+            if let Some(r) = push { ipc::push_to_shell(r.name, &r.payload); }
+        }
+    }
+}
+
+// Window-level shortcuts: every view's keyboard handler asks the registry, so no shortcut depends on which view has focus. A matched chord
+// is swallowed (the page never sees it). Only key-down events are matched.
+wrap_keyboard_handler! {
+    struct Keys { role: Role }
+    impl KeyboardHandler {
+        fn on_pre_key_event(&self, _b: Option<&mut Browser>, event: Option<&KeyEvent>, _os: Option<&mut sys::MSG>, _shortcut: Option<&mut i32>) -> i32 {
+            let Some(e) = event else { return 0 };
+            if e.type_ != KeyEventType::RAWKEYDOWN { return 0 }
+            let Some(chord) = keys::chord_from_event(e.windows_key_code, e.modifiers) else { return 0 };
+            let source = self.role.source();
+            let Some(cmd) = commands::lookup(&chord, source) else { return 0 };
+            println!("[host] shortcut {} -> {} (from {})", chord.display(), cmd.id, self.role.name());
+            let outcome = state::with(|s| s.backend.as_mut().map(|b| b.run_command(cmd.id, source)));
+            if let Some(o) = outcome { pages::deliver(o); }
+            1
+        }
+    }
+}
+
+// A page that navigates to a scheme the app does not handle (mailto:, ms-settings:, app:, ...) would otherwise hand the address to the
+// operating system to launch whatever is registered for it. The app denies every such launch and logs it; a prompt of its own (which
+// scheme, which page asked, allow once) comes with the safety nets in M1.6.
+wrap_resource_request_handler! {
+    struct Protocols { role: Role }
+    impl ResourceRequestHandler {
+        // The trait's default answer is 0, which is CANCEL: without this every request of every page would be cancelled.
+        fn on_before_resource_load(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, _r: Option<&mut Request>, _cb: Option<&mut Callback>) -> ReturnValue { ReturnValue::CONTINUE }
+        fn on_protocol_execution(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, request: Option<&mut Request>, allow_os_execution: Option<&mut i32>) {
+            if let Some(a) = allow_os_execution { *a = 0; }
+            let url = request.map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
+            eprintln!("[host] {} blocked a launch of an external protocol: {}", self.role.name(), log_safe(&url, 200));
+        }
+    }
+}
+
+wrap_request_handler! {
+    struct Requests { role: Role }
+    impl RequestHandler {
+        fn resource_request_handler(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, _r: Option<&mut Request>, _nav: i32, _dl: i32, _init: Option<&CefString>, _disable: Option<&mut i32>) -> Option<ResourceRequestHandler> {
+            Some(Protocols::new(self.role))
         }
     }
 }
@@ -104,17 +172,20 @@ wrap_permission_handler! {
     }
 }
 
+// `workspace` and `tab` are the ids of the tab this view shows (empty for the shell).
 wrap_client! {
-    pub struct HostClient { role: Role }
+    pub struct HostClient { role: Role, workspace: String, tab: String }
     impl Client {
         fn on_process_message_received(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>, source: ProcessId, message: Option<&mut ProcessMessage>) -> i32 {
             let (Some(frame), Some(message)) = (frame, message) else { return 0 };
             if source != ProcessId::RENDERER { return 0 }
             ipc::on_message(self.role, frame, message) as i32
         }
-        fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(Lifetime::new()) }
+        fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(Lifetime::new(self.workspace.clone(), self.tab.clone())) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(Loading::new(self.role)) }
-        fn display_handler(&self) -> Option<DisplayHandler> { Some(Titles::new(self.role)) }
+        fn display_handler(&self) -> Option<DisplayHandler> { Some(Titles::new(self.role, self.workspace.clone(), self.tab.clone())) }
+        fn keyboard_handler(&self) -> Option<KeyboardHandler> { Some(Keys::new(self.role)) }
+        fn request_handler(&self) -> Option<RequestHandler> { Some(Requests::new(self.role)) }
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(Dialogs::new(self.role)) }
         fn permission_handler(&self) -> Option<PermissionHandler> { Some(Permissions::new(self.role)) }
     }

@@ -7,7 +7,7 @@ Keep this file short. If a rule matters, it goes here; if it is detail, it goes 
 The Dev Browser is a personal, developer-oriented desktop browser written in Rust, rendering with embedded Chromium (CEF),
 with the Home Screen launcher and tools built in. Its core ideas: vertical tabs grouped by **workspace** (each with its own
 isolated login session and data), a browser-owned `Ctrl+P` launcher, a right-hand widget panel, and two-pane split view.
-Status: the M0 feasibility spike is done and deleted (direct CEF through cef-rs, Alloy-style views; see `planning/m0-feasibility-spike.md`). M1 is under way (`planning/m1-plan.md`): the Cargo workspace, `core` storage, the CEF host (one window, trusted shell from `app://shell`, a page), IPC v0, the S6 hostile-page check and the `tools/` scripts exist. M1.2 (workspaces and storage) is done: create, rename, recolour, switch and delete workspaces from the sidebar, each with its own profile. Next is M1.3, tabs and the command registry. Nothing is released.
+Status: the M0 feasibility spike is done and deleted (direct CEF through cef-rs, Alloy-style views; see `planning/m0-feasibility-spike.md`). M1 is under way (`planning/m1-plan.md`): the Cargo workspace, `core` storage, the CEF host (one window, trusted shell from `app://shell`, a page), IPC v0, the S6 hostile-page check and the `tools/` scripts exist. M1.2 (workspaces and storage) and M1.3 (tabs, the command registry, window-level shortcuts) are done. Next is M1.4, the sidebar and workspace experience. Nothing is released.
 
 Start with `planning/README.md`, then `planning/home-screen-browser-spec.md` (the source spec) and
 `planning/roadmap-and-milestones.md`.
@@ -23,6 +23,7 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 | Check (fmt, clippy, tests, ui build) | `tools\build.ps1 check` |
 | Build | `tools\build.ps1 build` |
 | Security check S6 (hostile page; needs a build and node) | `tools\s6-hostile-page.ps1` |
+| M1.3 check: shortcuts from page, iframe and sidebar; 200 tab cycles; restore (about 6 minutes, takes over mouse and keyboard) | `tools\m13-tabs.ps1` |
 | M1.2 check: two workspaces, separate logins, delete (takes over mouse and keyboard) | `toolsm12-workspaces.ps1` |
 | Screenshot / 60 fps frame check of the real window (takes over mouse and keyboard) | `tools\shot.ps1`, `tools\record.ps1` |
 | Docs dev | `cd docs && npm install && npm run dev` |

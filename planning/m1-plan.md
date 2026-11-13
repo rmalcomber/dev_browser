@@ -105,6 +105,12 @@ fall-back: pick another tab and focus a pane.
 **Done when:** 200 open/close/discard/recreate cycles leave the process count flat, closing the visible tab never leaves a blank,
 unresponsive window, and the keyboard works with focus in a page, in an iframe and in the shell.
 
+**Status: done 2026-11-13** (see the M1.3 entry in `docs/ai/decisions.md`), apart from the pane model, which waits for split view (M4). Checked by
+79 `core` and 14 `host` unit tests (the command registry, tab records, effects and the chord mapping) and `tools\m13-tabs.ps1`: shortcuts work
+with the focus in a page, an iframe and the sidebar and no page ever receives one; 200 open / unload / recreate / close cycles left 7
+processes at 7 and memory at +32 MB; the page area was never blank after closing the visible tab; tabs and the selected tab survive a
+restart and a window close. The checks found and fixed a real leak (browser views must live in a wrapper panel).
+
 ### M1.4 Sidebar and workspace experience (M)
 The Preact sidebar: workspaces, groups, tabs; name versus chevron; collapsed shows name and icon only (S11 as a UI test); accent colour
 frame around the page; restore-last-tab per workspace; switching hides the old workspace first and shows a dark neutral gap, never old

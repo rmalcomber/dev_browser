@@ -2,12 +2,15 @@
 //! Design: planning/m1-plan.md. A workspace is a profile; tabs belong to exactly one workspace.
 
 pub mod backend;
+pub mod commands;
 pub mod data;
 pub mod id;
 pub mod ipc;
 pub mod migrate;
 pub mod schema;
 pub mod settings;
+pub mod tab;
+pub mod url;
 pub mod workspace;
 
 #[cfg(test)]

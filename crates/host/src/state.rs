@@ -4,20 +4,23 @@
 use cef::*;
 use dev_browser_core::{backend::Backend, data::DataDir, id::Id};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// What the binary tells the host before it starts.
 #[derive(Clone, Debug)]
 pub struct Config {
     pub data: DataDir,
-    /// The first page every workspace opens (M1.3 replaces this with each workspace's restored tab).
+    /// The page a new tab opens (until the launcher and address bar exist).
     pub start_url: String,
 }
 
-/// One workspace's browsing: its profile (request context) and, once the context is ready, its page view.
-pub struct Page {
-    pub context: RequestContext,
-    pub view: Option<BrowserView>,
+/// A tab that has a view right now. The tab's record lives in core; this is only the CEF side.
+pub struct TabView {
+    pub workspace: Id,
+    /// The panel that holds the view. It is what is shown, hidden and detached: a browser view with no parent cannot finish closing
+    /// (M0 always removed a wrapper, never the view itself), and M1.4 draws the workspace colour frame in it.
+    pub wrapper: Panel,
+    pub view: BrowserView,
 }
 
 #[derive(Default)]
@@ -29,9 +32,21 @@ pub struct State {
     pub window: Option<Window>,
     pub panel: Option<Panel>,
     pub shell: Option<BrowserView>,
-    /// One entry per workspace that has been shown at least once in this run.
-    pub pages: HashMap<Id, Page>,
-    pub active: Option<Id>,
+    /// A request context per workspace that has been shown in this run, and which of them are initialised (views may be created).
+    pub contexts: HashMap<Id, RequestContext>,
+    pub ready: HashSet<Id>,
+    /// Tabs with a view.
+    pub tabs: HashMap<Id, TabView>,
+    /// Tabs core asked to show whose workspace profile is still starting: (workspace, tab, url).
+    pub waiting: Vec<(Id, Id, String)>,
+    /// The tab that should be visible.
+    pub shown: Option<Id>,
+    /// Tabs whose view the app itself is closing, so the browser's close event is not mistaken for the page closing itself.
+    pub closing: HashSet<Id>,
+    /// Focus the page as soon as the shown tab's view exists.
+    pub want_focus: bool,
+    /// The window is closing: browsers going away now are not tabs being closed.
+    pub shutting_down: bool,
     /// Last layout key (width, height, generation), so a layout change we cause ourselves does not loop.
     pub last_layout: (i32, i32, u32),
     /// Bumped whenever the set of visible views changes, to force the box layout to be re-installed.

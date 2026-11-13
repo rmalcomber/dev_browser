@@ -33,10 +33,11 @@ unlocked interactive desktop: **leave the mouse and keyboard alone while one run
 | Script | What it does |
 | --- | --- |
 | `s6-hostile-page.ps1` | S6: a hostile page cannot see `window.m0` or reach `app://shell`. Needs node. Exit code 0 = pass. |
+| `m13-tabs.ps1` | M1.3 checks: shortcuts work with the focus in a page, an iframe and the sidebar and never reach a page; `-Cycles 200` open / unload / recreate / close rounds keep the process count flat and the page never blank; a page that closes itself; tabs and the selection survive a restart. About 6 minutes. Needs node. |
 | `m12-workspaces.ps1` | M1.2 exit scenario: makes and deletes a workspace through the real sidebar and shows two workspaces on one site keep separate logins, which persist across a restart, and that deleted data is gone at exit. Needs node. |
 | `shot.ps1 -Out file.png` | Start the app, optionally `-Click x,y` and `-Keys "ctrl+3"`, save a picture of the window (`-ClientOnly` for the page area). |
 | `record.ps1 -Keys "ctrl+3@1500"` | Record the client area at 60 fps while sending timed keys, then print every colour state the shell strip and the page went through (`analyze-frames.js`). `-Expect "K\|R,K\|B"` makes any other frame a failure. The engine of the S8 check. Needs ffmpeg and node. |
-| `lib\app.ps1` | Shared helpers: `Start-App`, `Send-Keys`, `Click-Client`, `Save-Window`, `Wait-Log`, `Start-TestServer`. Dot-source it from a new script. |
+| `lib\app.ps1` | Shared helpers: `Start-App` (`-ReuseDir` restarts on the same data), `Send-Keys` (`ctrl+shift+tab`, `alt+1`, `f6`), `Send-Text`, `Click-Client`, `Close-App`, `Save-Window`, `Wait-Log`, `Start-TestServer`. Dot-source it from a new script. |
 
 `-Page colours.html` (on `shot.ps1` and `record.ps1`) serves a solid-colour page from `test-pages\` over http through
 `test-server.js`; pressing `1`, `2` or `3` turns it red, blue or green, which is how the tools prove that keys arrive and that the frame

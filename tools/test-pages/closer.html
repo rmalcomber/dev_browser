@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>closer (a page that closes itself)</title>
+<!-- Pressing q makes the page call window.close(), as pages do after a sign-in flow or an "are you done?" step. -->
+<body style="margin:0;background:#a50;color:#fff;font:40px sans-serif;padding:20px">press q to close this page
+<input autofocus style="position:absolute;left:20px;top:100px;width:300px;height:30px">
+<script>
+  addEventListener('keydown', function (e) { if (e.key === 'q') window.close(); });
+</script>
+</body>

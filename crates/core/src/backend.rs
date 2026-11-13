@@ -1,20 +1,25 @@
-//! The backend: everything the shell may ask the app to do, decided here without any CEF. The host feeds it one message at a time and
-//! executes what comes back: replies to send to the shell, and **effects** (show a workspace, delete a workspace's views and data) that
-//! only the host can carry out.
+//! The backend: everything the shell may ask the app to do, decided here without any CEF. The host feeds it one message (or one key
+//! command) at a time and executes what comes back: replies to send to the shell, and **effects** that only the host can carry out
+//! (show a tab's page, destroy a view, delete a workspace's data, move focus).
 //!
-//! Messages (M1.2): `ping`, `workspaces.list`, `workspaces.create`, `workspaces.rename`, `workspaces.colour`, `workspaces.delete`,
-//! `workspaces.activate`. Every workspace message is answered with the full `workspaces` state (the list and the active id), so the shell
-//! never has to patch its own copy. Invariants kept here:
-//! - there is always at least one workspace, and exactly one is active;
-//! - a workspace id from the shell is parsed (`Id::parse`) before it is used for anything, and must name an existing workspace;
-//! - unknown fields, wrong types and oversized payloads are refused, not guessed at.
+//! Messages: `ping`; `workspaces.list|create|rename|colour|delete|activate`; `tabs.list|new|close|select|move`; `command` (run a
+//! registered command by id, the same path a keyboard shortcut takes). Every state-changing message is answered with the full
+//! `workspaces` and `tabs` state, so the shell never patches its own copy. Invariants kept here:
+//! - there is always at least one workspace, exactly one is active, and every workspace has at least one tab with one selected;
+//! - ids from the shell are parsed (`Id::parse`) before use, and a tab must belong to the *active* workspace (a tab id from another
+//!   workspace is "no such tab"): the shell cannot reach across workspaces;
+//! - unknown fields, wrong types and oversized payloads are refused, not guessed at;
+//! - which tab views are alive is decided here (the last `MAX_LIVE_VIEWS` shown), so views are cheap to discard and recreate.
 
+use crate::commands::{self, Source};
 use crate::data::{DataDir, DataError};
 use crate::id::Id;
 use crate::ipc::{Refused, Reply, MAX_PAYLOAD_BYTES};
-use crate::{settings, workspace};
+use crate::tab::{self, Tab};
+use crate::{settings, url, workspace};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub const PING: &str = "ping";
 pub const LIST: &str = "workspaces.list";
@@ -23,19 +28,34 @@ pub const RENAME: &str = "workspaces.rename";
 pub const COLOUR: &str = "workspaces.colour";
 pub const DELETE: &str = "workspaces.delete";
 pub const ACTIVATE: &str = "workspaces.activate";
+pub const TABS_LIST: &str = "tabs.list";
+pub const TABS_NEW: &str = "tabs.new";
+pub const TABS_CLOSE: &str = "tabs.close";
+pub const TABS_SELECT: &str = "tabs.select";
+pub const TABS_MOVE: &str = "tabs.move";
+pub const COMMAND: &str = "command";
 
 /// Colour and name of the workspace made on first run.
 const FIRST_NAME: &str = "Default";
 const FIRST_COLOUR: u32 = 0x2C5FA8;
 
+/// How many tab views may exist at once, across workspaces. Showing a tab beyond this destroys the view shown longest ago; its record
+/// stays and the view is recreated when the tab is selected again.
+pub const MAX_LIVE_VIEWS: usize = 8;
+
 /// Something only the host can do, in the order to do it.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Effect {
-    /// Show this workspace's page (creating its profile context and view on first use) and hide the others.
-    Activate(Id),
-    /// Close this workspace's views, release its profile, then remove its folders (`DataDir::remove_workspace_folders`). The record is
-    /// already gone.
-    Delete(Id),
+    /// Show this tab's page (creating the workspace's profile and the tab's view first if needed) and hide everything else.
+    Show { workspace: Id, tab: Id, url: String },
+    /// Destroy this tab's view. The record is kept (a discard) or already gone (a close): the host does not need to know which.
+    DestroyView { workspace: Id, tab: Id },
+    /// Close all of this workspace's views, release its profile, then remove its folders. The record is already gone.
+    DeleteWorkspace(Id),
+    /// Give keyboard focus to the visible page.
+    FocusPage,
+    /// Give keyboard focus to the sidebar.
+    FocusShell,
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -56,6 +76,21 @@ struct WorkspaceOut {
 struct StateOut {
     workspaces: Vec<WorkspaceOut>,
     active: String,
+}
+
+#[derive(Serialize)]
+struct TabOut {
+    id: String,
+    title: String,
+    url: String,
+    position: u32,
+}
+
+#[derive(Serialize)]
+struct TabsOut {
+    workspace: String,
+    selected: Option<String>,
+    tabs: Vec<TabOut>,
 }
 
 #[derive(Serialize)]
@@ -91,17 +126,57 @@ struct IdIn {
     id: String,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct NewTabIn {
+    #[serde(default)]
+    url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MoveIn {
+    id: String,
+    position: u32,
+}
+
+/// A parsed, validated request.
+enum Action {
+    Ping(String),
+    ListWorkspaces,
+    CreateWorkspace { name: String, colour: u32 },
+    Rename { id: Id, name: String },
+    Colour { id: Id, colour: u32 },
+    DeleteWorkspace(Id),
+    Activate(Id),
+    ListTabs,
+    NewTab(Option<String>),
+    CloseTab(Id),
+    SelectTab(Id),
+    MoveTab { id: Id, position: u32 },
+    Command(&'static str),
+}
+
+/// A user-facing failure (shown in the shell), as opposed to a `Refused` protocol violation.
+type Failure = String;
+
 pub struct Backend {
     data: DataDir,
     global: Connection,
     active: Id,
+    /// Open workspace databases, kept so a tab operation does not reopen and re-migrate a file. Dropped when the workspace is deleted.
+    workspace_dbs: HashMap<Id, Connection>,
+    /// The page a new tab opens (until the launcher and address bar exist).
+    start_url: String,
+    /// Tabs that have a view, least recently shown first, with their workspace.
+    live: Vec<(Id, Id)>,
     orphans_removed: Vec<Id>,
 }
 
 impl Backend {
     /// Open the data folder's global database, make sure there is a workspace and an active one, and sweep orphaned workspace folders
-    /// (left by a crash or a locked folder). Safe to call on every start.
-    pub fn open(data: DataDir) -> Result<Backend, DataError> {
+    /// (left by a crash or a locked folder). Safe to call on every start. `start_url` is what a new tab opens.
+    pub fn open(data: DataDir, start_url: &str) -> Result<Backend, DataError> {
         let mut global = data.open_global()?;
         if workspace::list(&global)?.is_empty() {
             data.create_workspace(&mut global, FIRST_NAME, FIRST_COLOUR)?;
@@ -114,10 +189,18 @@ impl Backend {
         settings::set(&global, settings::ACTIVE_WORKSPACE, active.as_str())?;
         data.open_workspace(&active)?; // its folders and database exist before the host needs them
         let orphans_removed = data.remove_orphans(&global)?;
+        let start_url = if url::is_restorable(start_url) {
+            start_url.to_string()
+        } else {
+            "about:blank".to_string()
+        };
         Ok(Backend {
             data,
             global,
             active,
+            workspace_dbs: HashMap::new(),
+            start_url,
+            live: Vec::new(),
             orphans_removed,
         })
     }
@@ -131,8 +214,8 @@ impl Backend {
     }
 
     /// Remove the folders of workspaces that no longer exist. Call it when nothing holds those folders: before CEF starts (`open` does)
-    /// and after CEF has shut down. Chromium keeps a deleted workspace's profile open for the rest of the run, so the host sweeps again at
-    /// exit and a deleted workspace's data is gone when the app closes, not only at the next start.
+    /// and after CEF has shut down. The host sweeps again right after CEF shuts down, so anything a crash or a locked file left behind
+    /// is gone when the app exits, not only at the next start.
     pub fn sweep_orphans(&self) -> Result<Vec<Id>, DataError> {
         self.data.remove_orphans(&self.global)
     }
@@ -141,6 +224,8 @@ impl Backend {
     pub fn orphans_removed(&self) -> &[Id] {
         &self.orphans_removed
     }
+
+    // ---- replies ----
 
     /// The `workspaces` reply: the whole list in order and the active id.
     pub fn state_reply(&self) -> Reply {
@@ -164,6 +249,31 @@ impl Backend {
         }
     }
 
+    /// The `tabs` reply for the active workspace: its tabs in order and which one is selected.
+    pub fn tabs_reply(&mut self) -> Reply {
+        let ws = self.active.clone();
+        let (tabs, selected) = self
+            .with_db(&ws, |c| Ok((tab::list(c)?, tab::selected(c)?)))
+            .unwrap_or_default();
+        let out = TabsOut {
+            workspace: ws.to_string(),
+            selected: selected.map(|t| t.id.to_string()),
+            tabs: tabs
+                .into_iter()
+                .map(|t| TabOut {
+                    id: t.id.to_string(),
+                    title: t.title,
+                    url: t.url,
+                    position: t.position,
+                })
+                .collect(),
+        };
+        Reply {
+            name: "tabs",
+            payload: serde_json::to_string(&out).expect("tabs serialise"),
+        }
+    }
+
     fn error_reply(request: &str, message: impl std::fmt::Display) -> Reply {
         Reply {
             name: "error",
@@ -175,7 +285,165 @@ impl Backend {
         }
     }
 
-    fn parse<T: for<'de> Deserialize<'de>>(message: &str, payload: &str) -> Result<T, Refused> {
+    fn both(&mut self, effects: Vec<Effect>) -> Outcome {
+        Outcome {
+            replies: vec![self.state_reply(), self.tabs_reply()],
+            effects,
+        }
+    }
+
+    fn user_error(request: &str, message: impl std::fmt::Display) -> Outcome {
+        Outcome {
+            replies: vec![Self::error_reply(request, message)],
+            effects: vec![],
+        }
+    }
+
+    // ---- database access ----
+
+    /// Run `f` on a workspace's database (opened and migrated on first use).
+    fn with_db<T>(
+        &mut self,
+        ws: &Id,
+        f: impl FnOnce(&Connection) -> Result<T, tab::TabError>,
+    ) -> Result<T, Failure> {
+        if !self.workspace_dbs.contains_key(ws) {
+            let conn = self.data.open_workspace(ws).map_err(|e| e.to_string())?;
+            self.workspace_dbs.insert(ws.clone(), conn);
+        }
+        f(&self.workspace_dbs[ws]).map_err(|e| e.to_string())
+    }
+
+    /// Give the workspace a first tab if it has none (a new workspace, or one made before tabs existed).
+    fn ensure_tabs(&mut self, ws: &Id) -> Result<(), Failure> {
+        let start = self.start_url.clone();
+        self.with_db(ws, |c| {
+            if tab::list(c)?.is_empty() {
+                let first = tab::create(c, &start, None)?;
+                tab::select(c, &first.id)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The selected tab of a workspace (the first one if none is remembered).
+    fn current(&mut self, ws: &Id) -> Result<Tab, Failure> {
+        self.ensure_tabs(ws)?;
+        self.with_db(ws, |c| match tab::selected(c)? {
+            Some(t) => Ok(t),
+            None => Ok(tab::list(c)?.remove(0)),
+        })
+    }
+
+    /// Select `tab`, ask the host to show it, and keep the live-view list: at most `MAX_LIVE_VIEWS`, least recently shown destroyed first.
+    fn show(&mut self, ws: &Id, tab: &Tab, effects: &mut Vec<Effect>) -> Result<(), Failure> {
+        let id = tab.id.clone();
+        self.with_db(ws, |c| tab::select(c, &id))?;
+        effects.push(Effect::Show {
+            workspace: ws.clone(),
+            tab: tab.id.clone(),
+            url: tab.url.clone(),
+        });
+        self.live.retain(|(_, t)| t != &tab.id);
+        self.live.push((ws.clone(), tab.id.clone()));
+        while self.live.len() > MAX_LIVE_VIEWS {
+            let (w, t) = self.live.remove(0);
+            effects.push(Effect::DestroyView {
+                workspace: w,
+                tab: t,
+            });
+        }
+        Ok(())
+    }
+
+    fn set_active(&mut self, id: &Id) -> Result<(), DataError> {
+        self.data.open_workspace(id)?;
+        settings::set(&self.global, settings::ACTIVE_WORKSPACE, id.as_str())?;
+        self.active = id.clone();
+        Ok(())
+    }
+
+    fn activate(&mut self, id: &Id) -> Result<Vec<Effect>, Failure> {
+        if workspace::get(&self.global, id).is_err() {
+            return Err("there is no such workspace".into());
+        }
+        self.set_active(id).map_err(|e| e.to_string())?;
+        let current = self.current(id)?;
+        let mut effects = vec![];
+        self.show(id, &current, &mut effects)?;
+        Ok(effects)
+    }
+
+    // ---- what the host calls ----
+
+    /// The first thing the host does once its window exists: show the active workspace's selected tab and focus it.
+    pub fn startup(&mut self) -> Outcome {
+        let ws = self.active.clone();
+        let mut effects = vec![];
+        let result = self
+            .current(&ws)
+            .and_then(|t| self.show(&ws, &t, &mut effects));
+        if let Err(e) = result {
+            return Self::user_error("startup", e);
+        }
+        effects.push(Effect::FocusPage);
+        self.both(effects)
+    }
+
+    /// A page changed its title. Returns the `tabs` reply to push to the shell, if the tab is in the active workspace.
+    pub fn tab_title(&mut self, ws: &Id, tab_id: &Id, title: &str) -> Option<Reply> {
+        let id = tab_id.clone();
+        self.with_db(ws, |c| tab::set_title(c, &id, title)).ok()?;
+        (ws == &self.active).then(|| self.tabs_reply())
+    }
+
+    /// A page navigated. Only an address that may be re-opened is stored (`url::is_restorable`).
+    pub fn tab_url(&mut self, ws: &Id, tab_id: &Id, new_url: &str) -> Option<Reply> {
+        let id = tab_id.clone();
+        let stored = self
+            .with_db(ws, |c| tab::set_url(c, &id, new_url))
+            .unwrap_or(false);
+        (stored && ws == &self.active).then(|| self.tabs_reply())
+    }
+
+    /// A tab's view went away without the app asking (the page closed itself, with `window.close()` for example). If the tab still
+    /// exists this is a close: returns what to do next (usually: show a neighbour). `None` if the app had destroyed the view itself.
+    pub fn view_closed_by_page(&mut self, ws: &Id, tab_id: &Id) -> Option<Outcome> {
+        let before = self.live.len();
+        self.live.retain(|(_, t)| t != tab_id);
+        if self.live.len() == before {
+            return None; // the app destroyed it (a discard or a close it ordered): nothing to do
+        }
+        let outcome = self.close_tab(ws, tab_id, false);
+        Some(outcome.unwrap_or_else(|e| Self::user_error("view.closed", e)))
+    }
+
+    // ---- messages ----
+
+    /// Decide what to do with one message from the shell.
+    pub fn handle(&mut self, name: &str, payload: &str) -> Result<Outcome, Refused> {
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            return Err(Refused::PayloadTooLarge(payload.len()));
+        }
+        let action = Self::parse_action(name, payload)?;
+        Ok(match self.run(action, Source::Shell) {
+            Ok(outcome) => outcome,
+            Err(message) => Self::user_error(name, message),
+        })
+    }
+
+    /// Run a registered command by id, as a keyboard shortcut or the shell does. `source` is where the key was pressed.
+    pub fn run_command(&mut self, id: &str, source: Source) -> Outcome {
+        match commands::find(id) {
+            Some(cmd) => match self.command(cmd.id, source) {
+                Ok(o) => o,
+                Err(message) => Self::user_error(cmd.id, message),
+            },
+            None => Self::user_error(id, "unknown command"),
+        }
+    }
+
+    fn from_json<T: for<'de> Deserialize<'de>>(message: &str, payload: &str) -> Result<T, Refused> {
         serde_json::from_str(payload).map_err(|e| Refused::BadPayload {
             message: message.to_string(),
             // never serde's own text: for a wrong type it quotes the offending value (a token, say), and this goes to the log
@@ -195,129 +463,339 @@ impl Backend {
         })
     }
 
-    fn state_outcome(&self, effects: Vec<Effect>) -> Outcome {
-        Outcome {
-            replies: vec![self.state_reply()],
-            effects,
+    fn no_payload(name: &str, payload: &str) -> Result<(), Refused> {
+        if payload.is_empty() || payload == "{}" {
+            Ok(())
+        } else {
+            Err(Refused::BadPayload {
+                message: name.into(),
+                why: "takes no payload".into(),
+            })
         }
     }
 
-    fn user_error(request: &str, message: impl std::fmt::Display) -> Outcome {
-        Outcome {
-            replies: vec![Self::error_reply(request, message)],
-            effects: vec![],
-        }
-    }
-
-    fn exists(&self, id: &Id) -> bool {
-        workspace::get(&self.global, id).is_ok()
-    }
-
-    fn set_active(&mut self, id: &Id) -> Result<(), DataError> {
-        self.data.open_workspace(id)?;
-        settings::set(&self.global, settings::ACTIVE_WORKSPACE, id.as_str())?;
-        self.active = id.clone();
-        Ok(())
-    }
-
-    /// Decide what to do with one message from the shell.
-    pub fn handle(&mut self, name: &str, payload: &str) -> Result<Outcome, Refused> {
-        if payload.len() > MAX_PAYLOAD_BYTES {
-            return Err(Refused::PayloadTooLarge(payload.len()));
-        }
-        match name {
-            PING => Ok(Outcome {
-                replies: vec![Reply {
-                    name: "pong",
-                    payload: payload.to_string(),
-                }],
-                effects: vec![],
-            }),
+    fn parse_action(name: &str, payload: &str) -> Result<Action, Refused> {
+        Ok(match name {
+            PING => Action::Ping(payload.to_string()),
             LIST => {
-                if !payload.is_empty() && payload != "{}" {
-                    return Err(Refused::BadPayload {
-                        message: name.into(),
-                        why: "takes no payload".into(),
-                    });
-                }
-                Ok(self.state_outcome(vec![]))
+                Self::no_payload(name, payload)?;
+                Action::ListWorkspaces
             }
             CREATE => {
-                let r: CreateIn = Self::parse(name, payload)?;
-                match self
-                    .data
-                    .create_workspace(&mut self.global, &r.name, r.colour)
-                {
-                    Ok(ws) => match self.set_active(&ws.id) {
-                        Ok(()) => Ok(self.state_outcome(vec![Effect::Activate(ws.id)])),
-                        Err(e) => Ok(Self::user_error(name, e)),
-                    },
-                    Err(e) => Ok(Self::user_error(name, e)),
+                let r: CreateIn = Self::from_json(name, payload)?;
+                Action::CreateWorkspace {
+                    name: r.name,
+                    colour: r.colour,
                 }
             }
             RENAME => {
-                let r: RenameIn = Self::parse(name, payload)?;
-                let id = Self::parse_id(name, &r.id)?;
-                match workspace::rename(&self.global, &id, &r.name) {
-                    Ok(_) => Ok(self.state_outcome(vec![])),
-                    Err(e) => Ok(Self::user_error(name, e)),
+                let r: RenameIn = Self::from_json(name, payload)?;
+                Action::Rename {
+                    id: Self::parse_id(name, &r.id)?,
+                    name: r.name,
                 }
             }
             COLOUR => {
-                let r: ColourIn = Self::parse(name, payload)?;
-                let id = Self::parse_id(name, &r.id)?;
-                match workspace::set_colour(&self.global, &id, r.colour) {
-                    Ok(_) => Ok(self.state_outcome(vec![])),
-                    Err(e) => Ok(Self::user_error(name, e)),
-                }
-            }
-            ACTIVATE => {
-                let r: IdIn = Self::parse(name, payload)?;
-                let id = Self::parse_id(name, &r.id)?;
-                if !self.exists(&id) {
-                    return Ok(Self::user_error(name, "there is no such workspace"));
-                }
-                match self.set_active(&id) {
-                    Ok(()) => Ok(self.state_outcome(vec![Effect::Activate(id)])),
-                    Err(e) => Ok(Self::user_error(name, e)),
+                let r: ColourIn = Self::from_json(name, payload)?;
+                Action::Colour {
+                    id: Self::parse_id(name, &r.id)?,
+                    colour: r.colour,
                 }
             }
             DELETE => {
-                let r: IdIn = Self::parse(name, payload)?;
-                let id = Self::parse_id(name, &r.id)?;
-                let all = match workspace::list(&self.global) {
-                    Ok(a) => a,
-                    Err(e) => return Ok(Self::user_error(name, e)),
-                };
-                let Some(index) = all.iter().position(|w| w.id == id) else {
-                    return Ok(Self::user_error(name, "there is no such workspace"));
-                };
-                if all.len() == 1 {
-                    return Ok(Self::user_error(
-                        name,
-                        "you cannot delete your only workspace",
-                    ));
-                }
-                if let Err(e) = workspace::delete_record(&mut self.global, &id) {
-                    return Ok(Self::user_error(name, e));
-                }
-                let mut effects = vec![Effect::Delete(id.clone())];
-                if self.active == id {
-                    // the workspace that took its place in the list, or the one before it if it was last
-                    let next = all
-                        .get(index + 1)
-                        .or_else(|| all.get(index.wrapping_sub(1)))
-                        .expect("there was more than one workspace");
-                    let next = next.id.clone();
-                    if let Err(e) = self.set_active(&next) {
-                        return Ok(Self::user_error(name, e));
-                    }
-                    effects.push(Effect::Activate(next));
-                }
-                Ok(self.state_outcome(effects))
+                let r: IdIn = Self::from_json(name, payload)?;
+                Action::DeleteWorkspace(Self::parse_id(name, &r.id)?)
             }
-            other => Err(Refused::UnknownMessage(other.chars().take(64).collect())),
+            ACTIVATE => {
+                let r: IdIn = Self::from_json(name, payload)?;
+                Action::Activate(Self::parse_id(name, &r.id)?)
+            }
+            TABS_LIST => {
+                Self::no_payload(name, payload)?;
+                Action::ListTabs
+            }
+            TABS_NEW => {
+                let r: NewTabIn = if payload.is_empty() {
+                    NewTabIn::default()
+                } else {
+                    Self::from_json(name, payload)?
+                };
+                Action::NewTab(r.url)
+            }
+            TABS_CLOSE => {
+                let r: IdIn = Self::from_json(name, payload)?;
+                Action::CloseTab(Self::parse_id(name, &r.id)?)
+            }
+            TABS_SELECT => {
+                let r: IdIn = Self::from_json(name, payload)?;
+                Action::SelectTab(Self::parse_id(name, &r.id)?)
+            }
+            TABS_MOVE => {
+                let r: MoveIn = Self::from_json(name, payload)?;
+                Action::MoveTab {
+                    id: Self::parse_id(name, &r.id)?,
+                    position: r.position,
+                }
+            }
+            COMMAND => {
+                let r: IdIn = Self::from_json(name, payload)?;
+                match commands::find(&r.id) {
+                    Some(c) => Action::Command(c.id),
+                    None => return Err(Refused::UnknownMessage(r.id.chars().take(64).collect())),
+                }
+            }
+            other => return Err(Refused::UnknownMessage(other.chars().take(64).collect())),
+        })
+    }
+
+    fn run(&mut self, action: Action, source: Source) -> Result<Outcome, Failure> {
+        match action {
+            Action::Ping(text) => Ok(Outcome {
+                replies: vec![Reply {
+                    name: "pong",
+                    payload: text,
+                }],
+                effects: vec![],
+            }),
+            Action::ListWorkspaces | Action::ListTabs => {
+                // make sure the active workspace has its tab before reporting it
+                let ws = self.active.clone();
+                self.ensure_tabs(&ws)?;
+                Ok(self.both(vec![]))
+            }
+            Action::CreateWorkspace { name, colour } => {
+                let ws = self
+                    .data
+                    .create_workspace(&mut self.global, &name, colour)
+                    .map_err(|e| e.to_string())?;
+                let effects = self.activate(&ws.id)?;
+                Ok(self.both(effects))
+            }
+            Action::Rename { id, name } => {
+                workspace::rename(&self.global, &id, &name).map_err(|e| e.to_string())?;
+                Ok(self.both(vec![]))
+            }
+            Action::Colour { id, colour } => {
+                workspace::set_colour(&self.global, &id, colour).map_err(|e| e.to_string())?;
+                Ok(self.both(vec![]))
+            }
+            Action::Activate(id) => {
+                let effects = self.activate(&id)?;
+                Ok(self.both(effects))
+            }
+            Action::DeleteWorkspace(id) => self.delete_workspace(&id),
+            Action::NewTab(url) => self.new_tab(url, false),
+            Action::CloseTab(id) => {
+                let ws = self.active.clone();
+                self.close_tab(&ws, &id, true)
+            }
+            Action::SelectTab(id) => {
+                let ws = self.active.clone();
+                let tab = self.tab_in_active(&id)?;
+                let mut effects = vec![];
+                self.show(&ws, &tab, &mut effects)?;
+                Ok(self.both(effects))
+            }
+            Action::MoveTab { id, position } => {
+                let ws = self.active.clone();
+                self.tab_in_active(&id)?;
+                self.with_db(&ws, |c| tab::move_to(c, &id, position))?;
+                Ok(self.both(vec![]))
+            }
+            Action::Command(id) => self.command(id, source),
         }
+    }
+
+    /// A tab by id, which must be in the **active** workspace.
+    fn tab_in_active(&mut self, id: &Id) -> Result<Tab, Failure> {
+        let ws = self.active.clone();
+        self.with_db(&ws, |c| tab::get(c, id))
+    }
+
+    fn delete_workspace(&mut self, id: &Id) -> Result<Outcome, Failure> {
+        let all = workspace::list(&self.global).map_err(|e| e.to_string())?;
+        let Some(index) = all.iter().position(|w| &w.id == id) else {
+            return Err("there is no such workspace".into());
+        };
+        if all.len() == 1 {
+            return Err("you cannot delete your only workspace".into());
+        }
+        workspace::delete_record(&mut self.global, id).map_err(|e| e.to_string())?;
+        // release everything held for it: its views are the host's to destroy (DeleteWorkspace), its database file is closed here
+        self.live.retain(|(w, _)| w != id);
+        self.workspace_dbs.remove(id);
+        let mut effects = vec![Effect::DeleteWorkspace(id.clone())];
+        if &self.active == id {
+            // the workspace that took its place in the list, or the one before it if it was last
+            let next = all
+                .get(index + 1)
+                .or_else(|| all.get(index.wrapping_sub(1)))
+                .expect("there was more than one workspace")
+                .id
+                .clone();
+            effects.extend(self.activate(&next)?);
+        }
+        Ok(self.both(effects))
+    }
+
+    /// Open a tab after the selected one and show it. `focus`: also give the page keyboard focus (keyboard commands do).
+    fn new_tab(&mut self, url: Option<String>, focus: bool) -> Result<Outcome, Failure> {
+        let ws = self.active.clone();
+        let url = url.unwrap_or_else(|| self.start_url.clone());
+        let after = self.current(&ws)?.position + 1;
+        let created = self.with_db(&ws, |c| tab::create(c, &url, Some(after)))?;
+        let mut effects = vec![];
+        self.show(&ws, &created, &mut effects)?;
+        if focus {
+            effects.push(Effect::FocusPage);
+        }
+        Ok(self.both(effects))
+    }
+
+    /// Close a tab of workspace `ws`. If it was the selected one, show its neighbour (a fresh tab if it was the last), and only then
+    /// destroy its view, so the window is never left without a page. `destroy_view`: false when the view is already gone.
+    fn close_tab(&mut self, ws: &Id, id: &Id, destroy_view: bool) -> Result<Outcome, Failure> {
+        let tabs = self.with_db(ws, tab::list)?;
+        let index = tabs
+            .iter()
+            .position(|t| &t.id == id)
+            .ok_or("there is no such tab")?;
+        let was_selected = self.current(ws)?.id == *id;
+        self.with_db(ws, |c| tab::close(c, id))?;
+        let was_live = self.live.iter().any(|(_, t)| t == id);
+        self.live.retain(|(_, t)| t != id);
+        let mut effects = vec![];
+        let mut focus = false;
+        if was_selected && ws == &self.active {
+            // a fresh tab if that was the last; otherwise the neighbour that now sits where it was, or the one before
+            let next = self.current_after_close(ws, index)?;
+            self.show(ws, &next, &mut effects)?;
+            focus = true;
+        } else if was_selected {
+            self.ensure_tabs(ws)?;
+        }
+        if was_live && destroy_view {
+            effects.push(Effect::DestroyView {
+                workspace: ws.clone(),
+                tab: id.clone(),
+            });
+        }
+        // last, so the view that was just destroyed cannot take the focus back
+        if focus {
+            effects.push(Effect::FocusPage);
+        }
+        Ok(self.both(effects))
+    }
+
+    fn current_after_close(&mut self, ws: &Id, index: usize) -> Result<Tab, Failure> {
+        self.ensure_tabs(ws)?;
+        self.with_db(ws, |c| {
+            let tabs = tab::list(c)?;
+            Ok(tabs
+                .get(index)
+                .or_else(|| tabs.get(index.wrapping_sub(1)))
+                .or(tabs.first())
+                .expect("a workspace has a tab after ensure_tabs")
+                .clone())
+        })
+    }
+
+    /// Execute a command that the registry knows. Commands that change what is shown also focus the page: a hidden view cannot keep
+    /// the focus, and the user pressed a key, so the keyboard should land somewhere useful.
+    fn command(&mut self, id: &str, source: Source) -> Result<Outcome, Failure> {
+        let ws = self.active.clone();
+        match id {
+            "tab.new" => self.new_tab(None, true),
+            "tab.close" => {
+                let current = self.current(&ws)?;
+                self.close_tab(&ws, &current.id, true)
+            }
+            "tab.next" => self.step_tab(1),
+            "tab.prev" => self.step_tab(-1),
+            "tab.select.last" => {
+                let n = self.with_db(&ws, |c| Ok(tab::list(c)?.len()))?;
+                self.select_index(n.saturating_sub(1))
+            }
+            "tab.move.down" => self.move_selected(1),
+            "tab.move.up" => self.move_selected(-1),
+            "tab.discard" => self.discard_background(),
+            "workspace.next" => self.step_workspace(1),
+            "workspace.prev" => self.step_workspace(-1),
+            "focus.cycle" => Ok(Outcome {
+                replies: vec![],
+                effects: vec![match source {
+                    Source::Shell => Effect::FocusPage,
+                    Source::Page => Effect::FocusShell,
+                }],
+            }),
+            "focus.page" => Ok(Outcome {
+                replies: vec![],
+                effects: vec![Effect::FocusPage],
+            }),
+            other => match other.strip_prefix("tab.select.").map(str::parse::<usize>) {
+                Some(Ok(n)) if n >= 1 => self.select_index(n - 1),
+                _ => Err("that command is not available yet".into()),
+            },
+        }
+    }
+
+    fn step_tab(&mut self, delta: isize) -> Result<Outcome, Failure> {
+        let ws = self.active.clone();
+        let tabs = self.with_db(&ws, tab::list)?;
+        let current = self.current(&ws)?;
+        let index = tabs.iter().position(|t| t.id == current.id).unwrap_or(0);
+        let next = (index as isize + delta).rem_euclid(tabs.len() as isize) as usize;
+        self.select_index(next)
+    }
+
+    fn select_index(&mut self, index: usize) -> Result<Outcome, Failure> {
+        let ws = self.active.clone();
+        let tabs = self.with_db(&ws, tab::list)?;
+        let mut effects = vec![];
+        if let Some(t) = tabs.get(index) {
+            self.show(&ws, t, &mut effects)?;
+            effects.push(Effect::FocusPage);
+        }
+        Ok(self.both(effects))
+    }
+
+    fn move_selected(&mut self, delta: isize) -> Result<Outcome, Failure> {
+        let ws = self.active.clone();
+        let current = self.current(&ws)?;
+        let count = self.with_db(&ws, |c| Ok(tab::list(c)?.len()))?;
+        let target = current.position as isize + delta;
+        if target >= 0 && (target as usize) < count {
+            self.with_db(&ws, |c| tab::move_to(c, &current.id, target as u32))?;
+        }
+        Ok(self.both(vec![]))
+    }
+
+    /// Destroy the views of every tab but the selected one. The records stay; selecting a tab recreates its view.
+    fn discard_background(&mut self) -> Result<Outcome, Failure> {
+        let ws = self.active.clone();
+        let current = self.current(&ws)?;
+        let mut effects = vec![];
+        let (keep, drop): (Vec<_>, Vec<_>) = std::mem::take(&mut self.live)
+            .into_iter()
+            .partition(|(_, t)| t == &current.id);
+        self.live = keep;
+        for (w, t) in drop {
+            effects.push(Effect::DestroyView {
+                workspace: w,
+                tab: t,
+            });
+        }
+        Ok(self.both(effects))
+    }
+
+    fn step_workspace(&mut self, delta: isize) -> Result<Outcome, Failure> {
+        let all = workspace::list(&self.global).map_err(|e| e.to_string())?;
+        let index = all.iter().position(|w| w.id == self.active).unwrap_or(0);
+        let next = &all[(index as isize + delta).rem_euclid(all.len() as isize) as usize];
+        let id = next.id.clone();
+        let mut effects = self.activate(&id)?;
+        effects.push(Effect::FocusPage);
+        Ok(self.both(effects))
     }
 }
 
@@ -327,14 +805,42 @@ mod tests {
     use crate::testutil::TempDir;
     use serde_json::{json, Value};
 
+    const START: &str = "https://start.example/";
+
     fn backend(tag: &str) -> (TempDir, Backend) {
         let t = TempDir::new(tag);
-        let b = Backend::open(DataDir::open(t.path()).unwrap()).unwrap();
+        let b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
         (t, b)
     }
 
     fn state(b: &Backend) -> Value {
         serde_json::from_str(&b.state_reply().payload).unwrap()
+    }
+
+    fn tabs(b: &mut Backend) -> Value {
+        serde_json::from_str(&b.tabs_reply().payload).unwrap()
+    }
+
+    fn tab_urls(b: &mut Backend) -> Vec<String> {
+        tabs(b)["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["url"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn tab_ids(b: &mut Backend) -> Vec<String> {
+        tabs(b)["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn selected(b: &mut Backend) -> String {
+        tabs(b)["selected"].as_str().unwrap().to_string()
     }
 
     fn names(b: &Backend) -> Vec<String> {
@@ -367,13 +873,72 @@ mod tests {
             .to_string()
     }
 
+    fn id(s: &str) -> Id {
+        Id::parse(s).unwrap()
+    }
+
+    fn shown(o: &Outcome) -> Vec<String> {
+        o.effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Show { tab, .. } => Some(tab.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn destroyed(o: &Outcome) -> Vec<String> {
+        o.effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::DestroyView { tab, .. } => Some(tab.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Open `n` more tabs with the keyboard command and return the new tab ids in order.
+    fn open_tabs(b: &mut Backend, n: usize) -> Vec<String> {
+        (0..n)
+            .map(|_| {
+                b.run_command("tab.new", Source::Page);
+                selected(b)
+            })
+            .collect()
+    }
+
+    // ---- workspaces (as in M1.2, with the new effects) ----
+
     #[test]
-    fn a_fresh_data_folder_gets_one_active_default_workspace() {
-        let (_t, b) = backend("fresh");
+    fn a_fresh_data_folder_gets_one_active_default_workspace_with_one_tab() {
+        let (_t, mut b) = backend("fresh");
         assert_eq!(names(&b), vec!["Default"]);
         assert_eq!(state(&b)["active"], id_of(&b, "Default"));
         assert!(b.data().workspace_db_path(b.active()).is_file());
         assert!(b.data().chromium_profile(b.active()).is_dir());
+        send(&mut b, TABS_LIST, json!({})); // makes the first tab
+        assert_eq!(tab_urls(&mut b), vec![START]);
+        assert!(!selected(&mut b).is_empty());
+    }
+
+    #[test]
+    fn startup_shows_the_selected_tab_and_focuses_the_page() {
+        let (_t, mut b) = backend("startup");
+        let o = b.startup();
+        let ws = b.active().clone();
+        let sel = selected(&mut b);
+        assert_eq!(
+            o.effects,
+            vec![
+                Effect::Show {
+                    workspace: ws,
+                    tab: id(&sel),
+                    url: START.into()
+                },
+                Effect::FocusPage
+            ]
+        );
+        assert_eq!(o.replies.len(), 2, "the shell gets workspaces and tabs");
     }
 
     #[test]
@@ -391,33 +956,36 @@ mod tests {
     }
 
     #[test]
-    fn create_makes_the_workspace_active_and_asks_the_host_to_show_it() {
+    fn creating_a_workspace_activates_it_with_its_own_first_tab() {
         let (_t, mut b) = backend("create");
+        b.startup();
         let o = send(
             &mut b,
             CREATE,
             json!({"name": " Work ", "colour": 0x00AA00}),
         );
         let work = id_of(&b, "Work");
-        assert_eq!(o.effects, vec![Effect::Activate(Id::parse(&work).unwrap())]);
-        let (name, s) = first_reply(&o);
-        assert_eq!(name, "workspaces");
-        assert_eq!(s["active"], work);
+        assert_eq!(state(&b)["active"], work);
         assert_eq!(names(&b), vec!["Default", "Work"]);
-        assert!(b
-            .data()
-            .chromium_profile(&Id::parse(&work).unwrap())
-            .is_dir());
+        assert!(
+            matches!(&o.effects[..], [Effect::Show { workspace, url, .. }] if workspace.as_str() == work && url == START)
+        );
+        assert_eq!(
+            tabs(&mut b)["workspace"],
+            work,
+            "the tabs reply is for the new workspace"
+        );
+        assert!(b.data().chromium_profile(&id(&work)).is_dir());
     }
 
     #[test]
     fn rename_and_colour_change_the_record_only() {
         let (_t, mut b) = backend("rename");
-        let id = id_of(&b, "Default");
-        let o = send(&mut b, RENAME, json!({"id": id, "name": "Home"}));
+        let wid = id_of(&b, "Default");
+        let o = send(&mut b, RENAME, json!({"id": wid, "name": "Home"}));
         assert!(o.effects.is_empty());
         assert_eq!(names(&b), vec!["Home"]);
-        let o = send(&mut b, COLOUR, json!({"id": id, "colour": 255}));
+        let o = send(&mut b, COLOUR, json!({"id": wid, "colour": 255}));
         assert!(o.effects.is_empty());
         assert_eq!(state(&b)["workspaces"][0]["colour"], 255);
     }
@@ -425,12 +993,12 @@ mod tests {
     #[test]
     fn bad_names_and_colours_are_user_errors_that_change_nothing() {
         let (_t, mut b) = backend("baduser");
-        let id = id_of(&b, "Default");
+        let wid = id_of(&b, "Default");
         for (msg, p) in [
             (CREATE, json!({"name": "", "colour": 1})),
             (CREATE, json!({"name": "x", "colour": 0x1000000u32})),
-            (RENAME, json!({"id": id, "name": "  "})),
-            (COLOUR, json!({"id": id, "colour": 0x1000000u32})),
+            (RENAME, json!({"id": wid, "name": "  "})),
+            (COLOUR, json!({"id": wid, "colour": 0x1000000u32})),
         ] {
             let o = send(&mut b, msg, p);
             let (name, e) = first_reply(&o);
@@ -442,22 +1010,21 @@ mod tests {
     }
 
     #[test]
-    fn activate_switches_and_survives_a_restart() {
+    fn activate_switches_shows_that_workspaces_tab_and_survives_a_restart() {
         let t = TempDir::new("activate");
         let second;
         {
-            let mut b = Backend::open(DataDir::open(t.path()).unwrap()).unwrap();
+            let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
             send(&mut b, CREATE, json!({"name": "Two", "colour": 2}));
             let first = id_of(&b, "Default");
             second = id_of(&b, "Two");
             let o = send(&mut b, ACTIVATE, json!({"id": first}));
-            assert_eq!(
-                o.effects,
-                vec![Effect::Activate(Id::parse(&first).unwrap())]
+            assert!(
+                matches!(&o.effects[..], [Effect::Show { workspace, .. }] if workspace.as_str() == first)
             );
             send(&mut b, ACTIVATE, json!({"id": second}));
         }
-        let b = Backend::open(DataDir::open(t.path()).unwrap()).unwrap();
+        let b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
         assert_eq!(
             state(&b)["active"],
             second,
@@ -473,7 +1040,7 @@ mod tests {
             let g = data.open_global().unwrap();
             settings::set(&g, settings::ACTIVE_WORKSPACE, "ws-0000000000000001").unwrap();
         }
-        let b = Backend::open(data).unwrap();
+        let b = Backend::open(data, START).unwrap();
         assert_eq!(state(&b)["active"], id_of(&b, "Default"));
     }
 
@@ -483,9 +1050,8 @@ mod tests {
         send(&mut b, CREATE, json!({"name": "Two", "colour": 2}));
         let first = id_of(&b, "Default");
         let second = id_of(&b, "Two");
-        // the active one is "Two"; delete the other (not active)
         let o = send(&mut b, DELETE, json!({"id": first}));
-        assert_eq!(o.effects, vec![Effect::Delete(Id::parse(&first).unwrap())]);
+        assert_eq!(o.effects, vec![Effect::DeleteWorkspace(id(&first))]);
         assert_eq!(names(&b), vec!["Two"]);
         assert_eq!(
             state(&b)["active"],
@@ -495,30 +1061,33 @@ mod tests {
     }
 
     #[test]
-    fn deleting_the_active_workspace_activates_a_neighbour() {
+    fn deleting_the_active_workspace_activates_a_neighbour_and_forgets_its_views() {
         let (_t, mut b) = backend("deleteactive");
+        b.startup();
         send(&mut b, CREATE, json!({"name": "B", "colour": 2}));
         send(&mut b, CREATE, json!({"name": "C", "colour": 3}));
         let (a, bb, c) = (id_of(&b, "Default"), id_of(&b, "B"), id_of(&b, "C"));
-        // C is active and last: deleting it moves to the one before
+        assert_eq!(b.live.len(), 3);
         let o = send(&mut b, DELETE, json!({"id": c}));
-        assert_eq!(
-            o.effects,
-            vec![
-                Effect::Delete(Id::parse(&c).unwrap()),
-                Effect::Activate(Id::parse(&bb).unwrap())
-            ]
+        assert_eq!(o.effects[0], Effect::DeleteWorkspace(id(&c)));
+        assert!(
+            matches!(&o.effects[1], Effect::Show { workspace, .. } if workspace.as_str() == bb)
         );
         assert_eq!(state(&b)["active"], bb);
-        // B is active and last again; activate the first and delete it: the next one takes over
+        assert_eq!(
+            b.live.len(),
+            2,
+            "the deleted workspace's views are no longer tracked"
+        );
+        assert!(
+            !b.workspace_dbs.contains_key(&id(&c)),
+            "its database file is closed"
+        );
         send(&mut b, ACTIVATE, json!({"id": a}));
         let o = send(&mut b, DELETE, json!({"id": a}));
-        assert_eq!(
-            o.effects,
-            vec![
-                Effect::Delete(Id::parse(&a).unwrap()),
-                Effect::Activate(Id::parse(&bb).unwrap())
-            ]
+        assert_eq!(o.effects[0], Effect::DeleteWorkspace(id(&a)));
+        assert!(
+            matches!(&o.effects[1], Effect::Show { workspace, .. } if workspace.as_str() == bb)
         );
         assert_eq!(names(&b), vec!["B"]);
     }
@@ -526,8 +1095,8 @@ mod tests {
     #[test]
     fn the_only_workspace_cannot_be_deleted() {
         let (_t, mut b) = backend("onlyone");
-        let id = id_of(&b, "Default");
-        let o = send(&mut b, DELETE, json!({"id": id}));
+        let wid = id_of(&b, "Default");
+        let o = send(&mut b, DELETE, json!({"id": wid}));
         assert_eq!(first_reply(&o).0, "error");
         assert!(o.effects.is_empty());
         assert_eq!(names(&b), vec!["Default"]);
@@ -546,6 +1115,376 @@ mod tests {
         assert_eq!(first_reply(&o).0, "error");
     }
 
+    // ---- tabs ----
+
+    #[test]
+    fn new_tab_opens_after_the_selected_one_shows_it_and_focuses_the_page() {
+        let (_t, mut b) = backend("newtab");
+        b.startup();
+        let first = selected(&mut b);
+        let o = b.run_command("tab.new", Source::Page);
+        let second = selected(&mut b);
+        assert_ne!(first, second);
+        assert_eq!(shown(&o), vec![second.clone()]);
+        assert_eq!(o.effects.last(), Some(&Effect::FocusPage));
+        // opening another from the first tab inserts right after it, not at the end
+        send(&mut b, TABS_SELECT, json!({"id": first}));
+        b.run_command("tab.new", Source::Page);
+        let third = selected(&mut b);
+        assert_eq!(tab_ids(&mut b), vec![first, third, second]);
+    }
+
+    #[test]
+    fn the_new_tab_message_takes_an_optional_restorable_url() {
+        let (_t, mut b) = backend("newtabmsg");
+        b.startup();
+        send(&mut b, TABS_NEW, json!({"url": "https://given.example/"}));
+        assert_eq!(tab_urls(&mut b), vec![START, "https://given.example/"]);
+        send(&mut b, TABS_NEW, json!({}));
+        assert_eq!(tab_urls(&mut b).last().unwrap(), START);
+        let o = send(&mut b, TABS_NEW, json!({"url": "javascript:alert(1)"}));
+        assert_eq!(first_reply(&o).0, "error");
+        let o = send(&mut b, TABS_NEW, json!({"url": "app://shell/index.html"}));
+        assert_eq!(first_reply(&o).0, "error");
+        assert_eq!(tab_urls(&mut b).len(), 3, "refused addresses made no tab");
+        assert!(
+            b.handle(TABS_NEW, "").is_ok(),
+            "no payload at all means the default page"
+        );
+    }
+
+    #[test]
+    fn closing_the_selected_tab_shows_its_neighbour_before_destroying_it() {
+        let (_t, mut b) = backend("closesel");
+        b.startup();
+        let ids = open_tabs(&mut b, 2); // tabs: first, ids[0], ids[1]; selected ids[1]
+        send(&mut b, TABS_SELECT, json!({"id": ids[0]}));
+        let o = b.run_command("tab.close", Source::Page);
+        // the one that took its place (ids[1]) is shown first, then the closed one's view is destroyed
+        assert_eq!(shown(&o), vec![ids[1].clone()]);
+        assert_eq!(destroyed(&o), vec![ids[0].clone()]);
+        let show_at = o
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::Show { .. }))
+            .unwrap();
+        let destroy_at = o
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::DestroyView { .. }))
+            .unwrap();
+        assert!(
+            show_at < destroy_at,
+            "never destroy the visible view before showing another"
+        );
+        assert_eq!(selected(&mut b), ids[1]);
+        assert_eq!(tab_urls(&mut b).len(), 2);
+    }
+
+    #[test]
+    fn closing_the_last_tab_in_the_list_shows_the_one_before() {
+        let (_t, mut b) = backend("closelast");
+        b.startup();
+        open_tabs(&mut b, 1);
+        let first = tab_ids(&mut b)[0].clone();
+        b.run_command("tab.close", Source::Page);
+        assert_eq!(selected(&mut b), first);
+        assert_eq!(tab_urls(&mut b).len(), 1);
+    }
+
+    #[test]
+    fn closing_the_only_tab_opens_a_fresh_one() {
+        let (_t, mut b) = backend("closeonly");
+        b.startup();
+        let only = selected(&mut b);
+        let o = b.run_command("tab.close", Source::Page);
+        assert_eq!(tab_urls(&mut b), vec![START]);
+        let fresh = selected(&mut b);
+        assert_ne!(fresh, only, "a new record, not the old one");
+        assert_eq!(shown(&o), vec![fresh]);
+        assert_eq!(destroyed(&o), vec![only]);
+        assert_eq!(o.effects.last(), Some(&Effect::FocusPage));
+    }
+
+    #[test]
+    fn closing_a_background_tab_destroys_its_view_and_changes_nothing_visible() {
+        let (_t, mut b) = backend("closebg");
+        b.startup();
+        let ids = open_tabs(&mut b, 2);
+        let o = send(&mut b, TABS_CLOSE, json!({"id": ids[0]}));
+        assert!(shown(&o).is_empty());
+        assert_eq!(destroyed(&o), vec![ids[0].clone()]);
+        assert_eq!(selected(&mut b), ids[1], "the selection did not move");
+        // a tab that never had a view needs no destroy
+        send(&mut b, TABS_NEW, json!({}));
+        let first = tab_ids(&mut b)[0].clone();
+        b.run_command("tab.discard", Source::Page);
+        let o = send(&mut b, TABS_CLOSE, json!({"id": first}));
+        assert!(destroyed(&o).is_empty());
+    }
+
+    #[test]
+    fn next_and_previous_wrap_around_and_focus_the_page() {
+        let (_t, mut b) = backend("step");
+        b.startup();
+        let ids = open_tabs(&mut b, 2);
+        let first = tab_ids(&mut b)[0].clone();
+        assert_eq!(selected(&mut b), ids[1]);
+        let o = b.run_command("tab.next", Source::Page);
+        assert_eq!(selected(&mut b), first, "after the last comes the first");
+        assert_eq!(o.effects.last(), Some(&Effect::FocusPage));
+        b.run_command("tab.prev", Source::Page);
+        assert_eq!(selected(&mut b), ids[1], "before the first comes the last");
+        b.run_command("tab.prev", Source::Shell);
+        assert_eq!(selected(&mut b), ids[0]);
+    }
+
+    #[test]
+    fn numbered_and_last_tab_commands_select_by_position() {
+        let (_t, mut b) = backend("numbered");
+        b.startup();
+        let ids = open_tabs(&mut b, 3);
+        let first = tab_ids(&mut b)[0].clone();
+        b.run_command("tab.select.1", Source::Page);
+        assert_eq!(selected(&mut b), first);
+        b.run_command("tab.select.3", Source::Page);
+        assert_eq!(selected(&mut b), ids[1]);
+        b.run_command("tab.select.last", Source::Page);
+        assert_eq!(selected(&mut b), ids[2]);
+        let o = b.run_command("tab.select.8", Source::Page);
+        assert!(o.effects.is_empty(), "there is no 8th tab: nothing happens");
+        assert_eq!(selected(&mut b), ids[2]);
+    }
+
+    #[test]
+    fn move_commands_reorder_and_stop_at_the_ends() {
+        let (_t, mut b) = backend("movecmd");
+        b.startup();
+        let ids = open_tabs(&mut b, 2);
+        let first = tab_ids(&mut b)[0].clone();
+        assert_eq!(selected(&mut b), ids[1]);
+        b.run_command("tab.move.down", Source::Page); // already last
+        assert_eq!(
+            tab_ids(&mut b),
+            vec![first.clone(), ids[0].clone(), ids[1].clone()]
+        );
+        b.run_command("tab.move.up", Source::Page);
+        assert_eq!(
+            tab_ids(&mut b),
+            vec![first.clone(), ids[1].clone(), ids[0].clone()]
+        );
+        b.run_command("tab.move.up", Source::Page);
+        b.run_command("tab.move.up", Source::Page); // already first
+        assert_eq!(tab_ids(&mut b), vec![ids[1].clone(), first, ids[0].clone()]);
+        // and the message form
+        let o = send(&mut b, TABS_MOVE, json!({"id": ids[0], "position": 0}));
+        assert_eq!(first_reply(&o).0, "workspaces");
+        assert_eq!(tab_ids(&mut b)[0], ids[0]);
+        let o = send(&mut b, TABS_MOVE, json!({"id": ids[0], "position": 9}));
+        assert_eq!(first_reply(&o).0, "error");
+    }
+
+    #[test]
+    fn only_the_last_few_views_stay_alive_and_a_discarded_tab_is_recreated_when_selected() {
+        let (_t, mut b) = backend("live");
+        b.startup();
+        let mut destroyed_total = vec![];
+        for _ in 0..(MAX_LIVE_VIEWS + 3) {
+            let o = b.run_command("tab.new", Source::Page);
+            destroyed_total.extend(destroyed(&o));
+        }
+        assert_eq!(
+            b.live.len(),
+            MAX_LIVE_VIEWS,
+            "never more views than the limit"
+        );
+        assert_eq!(
+            destroyed_total.len(),
+            4,
+            "12 tabs shown, 8 alive: 4 destroyed"
+        );
+        assert_eq!(
+            tab_ids(&mut b).len(),
+            MAX_LIVE_VIEWS + 4,
+            "every record is still there"
+        );
+        // selecting a discarded tab asks the host to show it, which creates the view from the record
+        let revived = &destroyed_total[0];
+        let o = send(&mut b, TABS_SELECT, json!({"id": revived}));
+        assert_eq!(shown(&o), vec![revived.clone()]);
+        assert_eq!(b.live.len(), MAX_LIVE_VIEWS);
+        assert!(b.live.iter().any(|(_, t)| t.as_str() == revived));
+    }
+
+    #[test]
+    fn discard_destroys_every_background_view_and_keeps_the_visible_one() {
+        let (_t, mut b) = backend("discard");
+        b.startup();
+        let ids = open_tabs(&mut b, 3);
+        let o = b.run_command("tab.discard", Source::Page);
+        assert_eq!(destroyed(&o).len(), 3);
+        assert!(
+            !destroyed(&o).contains(&ids[2]),
+            "the visible tab keeps its view"
+        );
+        assert_eq!(b.live.len(), 1);
+        assert_eq!(tab_urls(&mut b).len(), 4, "no record was removed");
+    }
+
+    #[test]
+    fn a_page_closing_itself_is_a_close_and_a_view_the_app_destroyed_is_not() {
+        let (_t, mut b) = backend("pageclose");
+        b.startup();
+        let ids = open_tabs(&mut b, 1);
+        let ws = b.active().clone();
+        // the app discards the first tab's view; the host later hears it closed, which must not count as the page closing itself
+        b.run_command("tab.discard", Source::Page);
+        let first = tab_ids(&mut b)[0].clone();
+        assert!(b.view_closed_by_page(&ws, &id(&first)).is_none());
+        assert_eq!(tab_urls(&mut b).len(), 2);
+        // the visible tab's page calls window.close(): its tab is closed and a neighbour shown
+        let o = b.view_closed_by_page(&ws, &id(&ids[0])).expect("a close");
+        assert_eq!(tab_urls(&mut b).len(), 1);
+        assert_eq!(shown(&o), vec![first.clone()]);
+        assert!(destroyed(&o).is_empty(), "its view is already gone");
+        // a second report for the same tab changes nothing
+        assert!(b.view_closed_by_page(&ws, &id(&ids[0])).is_none());
+    }
+
+    #[test]
+    fn tab_ids_from_another_workspace_are_not_reachable() {
+        let (_t, mut b) = backend("crossws");
+        b.startup();
+        let in_first = selected(&mut b);
+        send(&mut b, CREATE, json!({"name": "Two", "colour": 2}));
+        // the active workspace is Two; a tab id from Default must be "no such tab" for every operation
+        for (msg, p) in [
+            (TABS_SELECT, json!({"id": in_first})),
+            (TABS_CLOSE, json!({"id": in_first})),
+            (TABS_MOVE, json!({"id": in_first, "position": 0})),
+        ] {
+            let o = send(&mut b, msg, p);
+            assert_eq!(first_reply(&o).0, "error", "{msg}");
+            assert!(o.effects.is_empty(), "{msg}");
+        }
+        let ws = id_of(&b, "Default");
+        b.run_command("workspace.prev", Source::Page);
+        assert_eq!(tabs(&mut b)["workspace"], ws);
+        assert_eq!(
+            selected(&mut b),
+            in_first,
+            "and nothing was changed in Default"
+        );
+    }
+
+    #[test]
+    fn titles_and_addresses_update_the_record_and_reach_the_shell_only_for_the_active_workspace() {
+        let (_t, mut b) = backend("titles");
+        b.startup();
+        let ws = b.active().clone();
+        let tid = id(&selected(&mut b));
+        let reply = b
+            .tab_title(&ws, &tid, "Hello\nthere")
+            .expect("active workspace");
+        let t: Value = serde_json::from_str(&reply.payload).unwrap();
+        assert_eq!(t["tabs"][0]["title"], "Hello there");
+        let reply = b
+            .tab_url(&ws, &tid, "https://moved.example/page")
+            .expect("stored");
+        assert!(reply.payload.contains("moved.example"));
+        assert!(b.tab_url(&ws, &tid, "javascript:alert(1)").is_none());
+        assert!(b.tab_url(&ws, &tid, "data:text/html,x").is_none());
+        assert_eq!(tab_urls(&mut b), vec!["https://moved.example/page"]);
+        // a background workspace's tab updates its record but pushes nothing
+        send(&mut b, CREATE, json!({"name": "Two", "colour": 2}));
+        assert!(b.tab_title(&ws, &tid, "Background").is_none());
+        // a tab that no longer exists is ignored
+        assert!(b.tab_title(&ws, &Id::new("tab"), "x").is_none());
+    }
+
+    #[test]
+    fn tabs_and_the_selection_survive_a_restart() {
+        let t = TempDir::new("restore");
+        let (urls, sel);
+        {
+            let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
+            b.startup();
+            send(&mut b, TABS_NEW, json!({"url": "https://two.example/"}));
+            send(&mut b, TABS_NEW, json!({"url": "https://three.example/"}));
+            b.run_command("tab.prev", Source::Page);
+            urls = tab_urls(&mut b);
+            sel = selected(&mut b);
+        }
+        let mut b = Backend::open(DataDir::open(t.path()).unwrap(), START).unwrap();
+        let o = b.startup();
+        assert_eq!(tab_urls(&mut b), urls);
+        assert_eq!(selected(&mut b), sel);
+        assert_eq!(shown(&o), vec![sel], "the remembered tab is the one shown");
+    }
+
+    // ---- other commands ----
+
+    #[test]
+    fn workspace_commands_cycle_through_workspaces_and_focus_the_page() {
+        let (_t, mut b) = backend("wscycle");
+        b.startup();
+        send(&mut b, CREATE, json!({"name": "Two", "colour": 2}));
+        let (one, two) = (id_of(&b, "Default"), id_of(&b, "Two"));
+        let o = b.run_command("workspace.next", Source::Page);
+        assert_eq!(state(&b)["active"], one, "wraps from the last to the first");
+        assert_eq!(o.effects.last(), Some(&Effect::FocusPage));
+        b.run_command("workspace.prev", Source::Page);
+        assert_eq!(state(&b)["active"], two);
+    }
+
+    #[test]
+    fn focus_commands_depend_on_where_the_key_was_pressed() {
+        let (_t, mut b) = backend("focus");
+        assert_eq!(
+            b.run_command("focus.cycle", Source::Page).effects,
+            vec![Effect::FocusShell]
+        );
+        assert_eq!(
+            b.run_command("focus.cycle", Source::Shell).effects,
+            vec![Effect::FocusPage]
+        );
+        assert_eq!(
+            b.run_command("focus.page", Source::Shell).effects,
+            vec![Effect::FocusPage]
+        );
+    }
+
+    #[test]
+    fn every_registered_command_runs_without_error_on_a_fresh_backend() {
+        for cmd in commands::COMMANDS {
+            let (_t, mut b) = backend("allcmds");
+            b.startup();
+            let o = b.run_command(cmd.id, Source::Page);
+            assert!(
+                o.replies.iter().all(|r| r.name != "error"),
+                "{} gave an error: {:?}",
+                cmd.id,
+                o.replies
+            );
+        }
+    }
+
+    #[test]
+    fn the_command_message_runs_registered_commands_and_refuses_unknown_ones() {
+        let (_t, mut b) = backend("cmdmsg");
+        b.startup();
+        let o = send(&mut b, COMMAND, json!({"id": "tab.new"}));
+        assert_eq!(tab_urls(&mut b).len(), 2);
+        assert_eq!(o.effects.last(), Some(&Effect::FocusPage));
+        assert_eq!(
+            b.handle(COMMAND, r#"{"id":"system.format-disk"}"#),
+            Err(Refused::UnknownMessage("system.format-disk".into()))
+        );
+        assert_eq!(b.run_command("nope", Source::Page).replies[0].name, "error");
+    }
+
+    // ---- protocol ----
+
     #[test]
     fn protocol_violations_are_refused() {
         let (_t, mut b) = backend("refused");
@@ -553,42 +1492,32 @@ mod tests {
             b.handle("delete-everything", ""),
             Err(Refused::UnknownMessage("delete-everything".into()))
         );
-        assert!(matches!(
-            b.handle(CREATE, "not json"),
-            Err(Refused::BadPayload { .. })
-        ));
-        assert!(
-            matches!(
-                b.handle(CREATE, r#"{"name":"x"}"#),
-                Err(Refused::BadPayload { .. })
+        for (name, payload, why) in [
+            (CREATE, "not json", "not json"),
+            (CREATE, r#"{"name":"x"}"#, "a missing field"),
+            (
+                CREATE,
+                r#"{"name":"x","colour":1,"extra":true}"#,
+                "an unknown field",
             ),
-            "a missing field"
-        );
-        assert!(
-            matches!(
-                b.handle(CREATE, r#"{"name":"x","colour":1,"extra":true}"#),
-                Err(Refused::BadPayload { .. })
+            (CREATE, r#"{"name":5,"colour":1}"#, "a wrong type"),
+            (DELETE, r#"{"id":"../../Windows"}"#, "a path trick in an id"),
+            (LIST, r#"{"x":1}"#, "a payload where none is allowed"),
+            (TABS_LIST, r#"{"x":1}"#, "a payload where none is allowed"),
+            (TABS_CLOSE, r#"{"id":"tab-1","x":1}"#, "an unknown field"),
+            (
+                TABS_MOVE,
+                r#"{"id":"tab-1","position":-1}"#,
+                "a negative position",
             ),
-            "an unknown field"
-        );
-        assert!(
-            matches!(
-                b.handle(CREATE, r#"{"name":5,"colour":1}"#),
-                Err(Refused::BadPayload { .. })
-            ),
-            "a wrong type"
-        );
-        assert!(
-            matches!(
-                b.handle(DELETE, r#"{"id":"../../Windows"}"#),
-                Err(Refused::BadPayload { .. })
-            ),
-            "a path trick in an id"
-        );
-        assert!(matches!(
-            b.handle(LIST, r#"{"x":1}"#),
-            Err(Refused::BadPayload { .. })
-        ));
+            (TABS_NEW, r#"{"url":5}"#, "a wrong type"),
+            (COMMAND, r#"{"id":5}"#, "a wrong type"),
+        ] {
+            assert!(
+                matches!(b.handle(name, payload), Err(Refused::BadPayload { .. })),
+                "{name}: {why}"
+            );
+        }
         let big = "a".repeat(MAX_PAYLOAD_BYTES + 1);
         assert_eq!(
             b.handle(PING, &big),
@@ -620,14 +1549,15 @@ mod tests {
         assert!(!err.to_string().contains(secret), "{err}");
     }
 
+    // ---- data folder ----
+
     #[test]
     fn a_deleted_workspaces_folders_are_removed_by_the_sweep() {
         let (_t, mut b) = backend("sweep");
         send(&mut b, CREATE, json!({"name": "Two", "colour": 2}));
-        let two = Id::parse(&id_of(&b, "Two")).unwrap();
+        let two = id(&id_of(&b, "Two"));
         let first = id_of(&b, "Default");
-        let two_id = id_of(&b, "Two");
-        send(&mut b, DELETE, json!({"id": two_id}));
+        send(&mut b, DELETE, json!({"id": two.as_str()}));
         // the host has not removed the folders (Chromium still holds them): they are still on disk, with no record
         assert!(b.data().workspace_dir(&two).is_dir() && b.data().chromium_profile(&two).is_dir());
         assert_eq!(b.sweep_orphans().unwrap(), vec![two.clone()]);
@@ -635,7 +1565,7 @@ mod tests {
             !b.data().workspace_dir(&two).exists() && !b.data().chromium_profile(&two).exists()
         );
         assert!(
-            b.data().workspace_dir(&Id::parse(&first).unwrap()).is_dir(),
+            b.data().workspace_dir(&id(&first)).is_dir(),
             "the remaining workspace is untouched"
         );
         assert!(
@@ -656,7 +1586,7 @@ mod tests {
         // a folder whose name is a valid id of another kind is not a workspace either, and is never removed on a guess
         let other_kind = data.chromium_root().join(Id::new("tab").as_str());
         std::fs::create_dir_all(&other_kind).unwrap();
-        let b = Backend::open(data).unwrap();
+        let b = Backend::open(data, START).unwrap();
         assert_eq!(b.orphans_removed(), std::slice::from_ref(&orphan));
         assert!(!b.data().workspace_dir(&orphan).exists());
         assert!(
@@ -667,5 +1597,13 @@ mod tests {
             other_kind.is_dir(),
             "nor is one that is an id of another kind"
         );
+    }
+
+    #[test]
+    fn an_unusable_start_url_falls_back_to_a_blank_page() {
+        let t = TempDir::new("badstart");
+        let mut b = Backend::open(DataDir::open(t.path()).unwrap(), "javascript:alert(1)").unwrap();
+        b.startup();
+        assert_eq!(tab_urls(&mut b), vec!["about:blank"]);
     }
 }
