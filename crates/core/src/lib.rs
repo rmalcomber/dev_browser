@@ -3,6 +3,7 @@
 
 pub mod data;
 pub mod id;
+pub mod ipc;
 pub mod migrate;
 pub mod schema;
 pub mod workspace;

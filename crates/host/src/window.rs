@@ -2,12 +2,9 @@
 
 use crate::{
     handlers::{HostClient, Role},
-    layout, state,
+    layout, shell, state,
 };
 use cef::*;
-
-/// The trusted shell. A placeholder page until `app://shell` serves `ui/dist` (M1.1 task 6).
-const SHELL_PLACEHOLDER: &str = "data:text/html;charset=utf-8,<body style='margin:0;background:%23252526;color:%23ccc;font:14px system-ui;padding:12px'>The Dev Browser<br><small>alpha</small>";
 
 /// Called when the workspace profile is ready: build both views and the window.
 pub fn open() {
@@ -18,7 +15,7 @@ pub fn open() {
     let mut shell_style = layout::ViewStyle::new(false);
     let shell = browser_view_create(
         Some(&mut shell_client),
-        Some(&CefString::from(SHELL_PLACEHOLDER)),
+        Some(&CefString::from(shell::START_URL)),
         Some(&layout::browser_settings()),
         None,
         None,

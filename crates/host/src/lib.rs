@@ -3,8 +3,11 @@
 
 mod app;
 mod handlers;
+mod ipc;
 mod layout;
 mod profile;
+mod render;
+mod shell;
 mod state;
 mod window;
 

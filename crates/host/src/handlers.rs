@@ -1,7 +1,7 @@
 //! Client handlers, split by concern. Every browser view in the app uses `HostClient`; what differs (trusted shell or ordinary page)
 //! is the `Role`.
 
-use crate::state;
+use crate::{ipc, state};
 use cef::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +88,11 @@ wrap_permission_handler! {
 wrap_client! {
     pub struct HostClient { role: Role }
     impl Client {
+        fn on_process_message_received(&self, _b: Option<&mut Browser>, frame: Option<&mut Frame>, source: ProcessId, message: Option<&mut ProcessMessage>) -> i32 {
+            let (Some(frame), Some(message)) = (frame, message) else { return 0 };
+            if source != ProcessId::RENDERER { return 0 }
+            ipc::on_message(self.role, frame, message) as i32
+        }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(Lifetime::new()) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(Loading::new(self.role)) }
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(Dialogs::new(self.role)) }

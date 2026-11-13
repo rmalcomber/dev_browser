@@ -64,6 +64,9 @@ try {
       Run 'ui build' { Push-Location ui; try { npm run build } finally { Pop-Location } }
       Run 'cargo build' { cargo build -p dev_browser }
       $out = Join-Path $root 'target\debug'
+      # the shell is served from the ui folder next to the exe (app://shell)
+      if (Test-Path (Join-Path $out 'ui')) { Remove-Item (Join-Path $out 'ui') -Recurse -Force }
+      Copy-Item (Join-Path $root 'ui\dist') (Join-Path $out 'ui') -Recurse -Force
       foreach ($f in 'libcef.dll', 'chrome_elf.dll', 'd3dcompiler_47.dll', 'dxcompiler.dll', 'vk_swiftshader.dll', 'vk_swiftshader_icd.json', 'vulkan-1.dll', 'icudtl.dat', 'resources.pak', 'chrome_100_percent.pak', 'chrome_200_percent.pak', 'v8_context_snapshot.bin') {
         Copy-Item (Join-Path $env:CEF_PATH $f) $out -Force
       }
