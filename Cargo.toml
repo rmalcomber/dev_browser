@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/core", "crates/host", "crates/app"]
-# spike/ is the disposable M0 prototype with its own lock file and CEF pin; it is deleted once M1.1 lands.
-exclude = ["spike"]
 
 [workspace.package]
 version = "0.2.0-alpha"

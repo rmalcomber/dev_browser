@@ -7,7 +7,7 @@ Keep this file short. If a rule matters, it goes here; if it is detail, it goes 
 The Dev Browser is a personal, developer-oriented desktop browser written in Rust, rendering with embedded Chromium (CEF),
 with the Home Screen launcher and tools built in. Its core ideas: vertical tabs grouped by **workspace** (each with its own
 isolated login session and data), a browser-owned `Ctrl+P` launcher, a right-hand widget panel, and two-pane split view.
-Status: the M0 feasibility spike (`spike/`, disposable) is done on Windows and the shell decision is recorded (direct CEF through cef-rs, Alloy-style views); M1 has started (`planning/m1-plan.md`): the Cargo workspace, `core` storage and the `ui/` scaffold exist; the CEF host skeleton runs (one window, shell strip plus page); `app://shell` and IPC v0 are next.
+Status: the M0 feasibility spike is done and deleted (direct CEF through cef-rs, Alloy-style views; see `planning/m0-feasibility-spike.md`). M1 is under way (`planning/m1-plan.md`): the Cargo workspace, `core` storage, the CEF host (one window, trusted shell from `app://shell`, a page), IPC v0, the S6 hostile-page check and the `tools/` scripts exist. Next is M1.2, workspaces and storage. Nothing is released.
 
 Start with `planning/README.md`, then `planning/home-screen-browser-spec.md` (the source spec) and
 `planning/roadmap-and-milestones.md`.
@@ -23,6 +23,7 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 | Check (fmt, clippy, tests, ui build) | `tools\build.ps1 check` |
 | Build | `tools\build.ps1 build` |
 | Security check S6 (hostile page; needs a build and node) | `tools\s6-hostile-page.ps1` |
+| Screenshot / 60 fps frame check of the real window (takes over mouse and keyboard) | `tools\shot.ps1`, `tools\record.ps1` |
 | Docs dev | `cd docs && npm install && npm run dev` |
 | Docs build (also checks links) | `cd docs && npm run build` |
 
@@ -31,9 +32,8 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 - `docs/src/content/docs/`: the pages. Folders become sidebar groups.
 - `docs/ai/`: agent working notes (not published): `decisions.md`, `glossary.md`, `conventions.md`.
 - `planning/`: working plans, spec, milestones, open questions, security test matrix. Not published. Settled behaviour moves to `docs/`.
-- `spike/`: disposable M0 feasibility code, excluded from the Cargo workspace. Deleted once M1.1 lands; not the product.
 - `crates/core` (domain and SQLite storage, no CEF), `crates/host` (CEF only, M1.1), `crates/app` (the binary).
-- `ui/`: trusted Preact shell (Vite, vitest), served from `app://shell`. `tools/`: build and test scripts.
+- `ui/`: trusted Preact shell (Vite, vitest), served from `app://shell`. `tools/`: build, test and window-driving scripts (see `tools/README.md`).
 - Sibling project `../home_screen` is the source of the launcher and tools. Read it; never edit it from here.
 
 ## Invariants (spec section 6.3; do not weaken without a recorded decision)
@@ -43,6 +43,7 @@ Fill these in as soon as they exist. Agents must use these, not guess.
 - Sensitive tool input (JWTs, tokens) stays in memory; never logged or persisted by default.
 - Never silently bypass certificate errors. Tools get explicit inputs and capabilities, never raw browser objects or paths.
 - The `browser.db`/`homescreen.db` split is organisation, not a sandbox. Do not describe it as one.
+- Keyboard-first (Roy, 2026-11-13): every user action is a named command with a default shortcut, routed at window level; no action is mouse-only, and focus is always visible and never trapped. See `planning/m1-plan.md`, section 8a.
 
 ## Principles (from the manifesto, https://malcomber.com/manifesto/)
 1. **The Floppy Rule.** Everything must justify its bytes. The Linux kernel fits on a 3.5" floppy (1.44 MB); this project's

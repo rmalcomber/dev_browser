@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>colours (tool self-test)</title>
+<!--
+  A solid-colour page for the recording and screenshot tools. Starts red; pressing 1, 2 or 3 turns it red, blue or green, and the title says which.
+  With real key input (tools\record.ps1 -Keys "2@1500") it proves that keys reach the page and that the frame analyser sees the change.
+-->
+<body style="margin:0;background:#d00;color:#fff;font:120px sans-serif">
+<script>
+  var colours = { '1': ['#d00', 'red'], '2': ['#00d', 'blue'], '3': ['#0a0', 'green'] };
+  document.title = 'red';
+  addEventListener('keydown', function (e) {
+    var c = colours[e.key];
+    if (c) { document.body.style.background = c[0]; document.title = c[1]; }
+  });
+</script>
+</body>

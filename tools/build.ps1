@@ -3,7 +3,7 @@
 #   tools\build.ps1 test    cargo test (workspace) and ui tests
 #   tools\build.ps1 build   ui build, then cargo build of the app with the CEF runtime copied beside the exe (needs CMake, Ninja, CEF)
 #   tools\build.ps1 run     build, then start the app
-# Lessons carried over from the M0 spike (spike\run.ps1):
+# Lessons carried over from the M0 spike's run.ps1 (see tools\README.md):
 #  - CEF_PATH is an input of the cef-dll-sys build script: always use one spelling (forward slashes) or it rebuilds everything.
 #  - winget installs CMake and Ninja but a shell started earlier may not have them on PATH.
 param(
@@ -59,7 +59,7 @@ try {
       Need 'cargo', 'npm', 'cmake', 'ninja'
       if (-not $env:CEF_PATH) { $env:CEF_PATH = "$env:USERPROFILE/.local/share/cef" }
       $env:CEF_PATH = $env:CEF_PATH.Replace([string][char]92, '/')
-      if (-not (Test-Path (Join-Path $env:CEF_PATH 'libcef.dll'))) { throw "No CEF runtime in CEF_PATH ($env:CEF_PATH). See spike\README.md for how it was exported." }
+      if (-not (Test-Path (Join-Path $env:CEF_PATH 'libcef.dll'))) { throw "No CEF runtime in CEF_PATH ($env:CEF_PATH). See tools\README.md for how to export it." }
       UiInstalled
       Run 'ui build' { Push-Location ui; try { npm run build } finally { Pop-Location } }
       Run 'cargo build' { cargo build -p dev_browser }

@@ -48,7 +48,7 @@ crates/
   app/                     the binary: main(), command line, logging, wiring
 ui/                        Preact shell (Vite). Builds to ui/dist, embedded in the binary.
 tools/                     the spike's input, capture and frame-analysis scripts, promoted and tidied
-spike/                     kept until M1.1 is merged, then deleted (it stays in git history)
+spike/                     deleted when M1.1 landed (2026-11-13); last present at commit ac6960c
 docs/  planning/           as now
 ```
 
@@ -162,20 +162,42 @@ updated; a tagged `0.2.0-alpha`.
 | Windows-only habits creep into the code | Isolate platform code in `host`; no new Windows APIs outside it without a note |
 | Scope creep from M2 to M4 ideas | The "Not in M1" list above; anything else goes to the roadmap, not the slice |
 
+## 8a. Keyboard-first (decided 2026-11-13)
+
+Roy: keyboard-first belongs in M1, it is an important part of the project. So it is a rule on every slice, not a late polish pass:
+
+- **Every action is a named command** in `core` (id, label, default shortcut, whether it needs a page, a tab, a workspace). The shell,
+  the shortcut handler and (in M2) the launcher all run commands from one registry. No action exists only as a mouse click.
+- **Shortcuts are routed at window level**, in the host's pre-key-event handler on *every* view (shell and pages), so none depends on
+  which view has focus (the native dialog swallowed `Ctrl+6` in M0). A page never sees a reserved chord; chords a page may want
+  (`Ctrl+L`, `Ctrl+T`, ...) are reserved by the browser, as in other browsers, and the reserved list is documented.
+- **Focus is always visible and always reachable**: visible focus rings in the shell, `F6` and `Ctrl+L` style moves between the sidebar,
+  address bar and page, arrow keys inside the sidebar, `Esc` returns to the page. No keyboard trap.
+- **A conflict table** (`docs/.../shortcuts.md`) is the source of truth; a unit test in `core` fails if two commands share a chord.
+- **Each slice adds its commands and a key-only test** (the tools in `tools\` send real keys). M1.7's exit scenario is run once with
+  the mouse unplugged in effect: open, switch, close, restore, create and delete a workspace by keyboard alone.
+- **Not in M1:** the `Ctrl+P` launcher itself and user-rebindable shortcuts (M2); M1 ships fixed default chords.
+
+Where it lands: M1.1 shows the shell strip receiving keys; **M1.3** introduces the command registry, window-level routing and the
+reserved-chord list (it already owned shortcut routing); M1.4 and M1.5 add the sidebar and chrome commands with focus rings; M1.7 runs
+the key-only walk-through.
+
 ## 9. Open items for Roy
 
-1. Confirm D1 (Preact shell in trusted views) and D3 (Windows first). The rest I would simply record.
-2. Do you want the shell to be fully keyboard-first in M1 (focus rings, all actions reachable by key) or is that M2 with the launcher?
-3. Is `0.2.0-alpha` the right tag for the end of M1, and should releases start being published from M1 or only from M2?
+1. ~~Confirm D1 and D3~~ Confirmed 2026-11-12.
+2. ~~Keyboard-first in M1 or M2?~~ **M1** (2026-11-13): see section 8a.
+3. ~~Tag and release?~~ **Keep unreleased for now** (2026-11-13). Version stays `0.2.0-alpha` in `Cargo.toml`; nothing is tagged or published until Roy says so.
 
 ## 10. First tasks (ready to start)
 
-1. Write D1, D2, D4, D5 and D6 into `docs/ai/decisions.md` (D3 once confirmed).
-2. Create the Cargo workspace and the three crates with an empty build and a passing test; add `ui/` with Vite and one test.
-3. Port the spike's `run.ps1` environment checks into a documented `tools/build.ps1`; fill in the Commands table in `AGENTS.md`.
-4. `core`: workspace and tab records, IDs, the migration runner and its first migration, with tests.
-5. `host`: the CEF app skeleton in modules (app, window, views, handlers), opening one window and one page.
-6. Serve `ui/dist` from `app://shell` and show a shell strip; IPC v0 ping over process messages and the V8 binding.
-7. The hostile-page test for `window.m0` (S6) as an automated check.
-8. Promote the spike's `drive`, `shot`, `flicker` and frame-analysis scripts into `tools/` with a README.
-9. Delete `spike/` once tasks 5 to 7 are merged.
+All nine were done by 2026-11-13.
+
+1. Write D1, D2, D4, D5 and D6 into `docs/ai/decisions.md` (D3 once confirmed). **Done.**
+2. Create the Cargo workspace and the three crates with an empty build and a passing test; add `ui/` with Vite and one test. **Done.**
+3. Port the spike's `run.ps1` environment checks into a documented `tools/build.ps1`; fill in the Commands table in `AGENTS.md`. **Done.**
+4. `core`: workspace and tab records, IDs, the migration runner and its first migration, with tests. **Done** (workspaces, ids, migrations, data directory; tab records arrive in M1.3).
+5. `host`: the CEF app skeleton in modules (app, window, views, handlers), opening one window and one page. **Done.**
+6. Serve `ui/dist` from `app://shell` and show a shell strip; IPC v0 ping over process messages and the V8 binding. **Done.**
+7. The hostile-page test for `window.m0` (S6) as an automated check. **Done** (`tools\s6-hostile-page.ps1`).
+8. Promote the spike's `drive`, `shot`, `flicker` and frame-analysis scripts into `tools/` with a README. **Done**, generalised rather than copied: `tools\lib\app.ps1`, `shot.ps1`, `record.ps1` and `analyze-frames.js`, documented in `tools\README.md`. The spike-specific permission, wrapper and destroy scripts were not ported (they belong to M1.6 and M4).
+9. Delete `spike/` once tasks 5 to 7 are merged. **Done** (last commit that has it: `ac6960c`).

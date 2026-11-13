@@ -3,6 +3,9 @@
 **Goal:** answer, with evidence, whether a Rust host can embed Chromium with per-workspace sessions, a browser-owned
 overlay, reliable shortcut interception and two panes. Throwaway code is fine; the output is a decision, not a product.
 
+**The spike code has been deleted** (2026-11-13, when M1.1 landed). Every `spike/...` path below is a historical reference: read a file with
+`git show ac6960c:spike/<name>` (that commit is the last that has it). Parts of its tooling live on, generalised, in `tools/`.
+
 **Status:** done on Windows with candidate A; the decision is recorded in `docs/ai/decisions.md` (2026-11-12). What is left is in "Next steps for M0" at the end. Needs Roy's approval before any dependency is added or CEF is downloaded (AGENTS.md).
 
 ## Decisions needed before starting
